@@ -16,36 +16,37 @@ export async function POST(req: NextRequest): Promise<NextResponse<ReceiptData>>
   let imageMimeType = 'image/jpeg';
 
   try {
-    const contentType = req.headers.get('content-type') ?? '';
-    if (contentType.includes('multipart/form-data')) {
-      const formData = await req.formData();
-      const file = formData.get('image') as File | null;
-      if (file) {
-        const bytes = await file.arrayBuffer();
-        imageBase64 = Buffer.from(bytes).toString('base64');
-        imageMimeType = file.type || 'image/jpeg';
-      }
+    const formData = await req.formData();
+    const file = formData.get('image') as File | null;
+    if (file) {
+      const bytes = await file.arrayBuffer();
+      imageBase64 = Buffer.from(bytes).toString('base64');
+      imageMimeType = file.type || 'image/jpeg';
+      console.log(`[analyze] image received: ${file.name}, ${file.size}bytes, ${imageMimeType}`);
+    } else {
+      console.log('[analyze] no image in FormData — using mock');
     }
   } catch (e) {
-    console.error('FormData parse error:', e);
+    console.error('[analyze] FormData parse error:', e);
   }
 
+  // ── API キー確認 ────────────────────────────────────────────────────────────
+  const apiKey = process.env.GEMINI_API_KEY;
+  console.log(`[analyze] GEMINI_API_KEY set: ${!!apiKey}, imageBase64 set: ${!!imageBase64}`);
+
   // ── Gemini Vision で解析 ───────────────────────────────────────────────────
-  if (process.env.GEMINI_API_KEY && imageBase64) {
+  if (apiKey && imageBase64) {
     try {
       const { GoogleGenerativeAI } = await import('@google/generative-ai');
-      const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+      const genAI = new GoogleGenerativeAI(apiKey);
       const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
 
-      const prompt = `You are a Japanese receipt parser. Analyze this receipt image.
-Respond ONLY with a single JSON object — no markdown, no explanation.
+      const prompt = `Parse this receipt image. Respond ONLY with a single JSON object — no markdown, no explanation.
 Format: {"date":"YYYY-MM-DD","merchant":"store name","amount":1234,"confidence":0.9}
-
-Rules:
-- date: the receipt date (use ${today} if not visible)
-- merchant: store/restaurant name exactly as printed
-- amount: total amount as an integer in JPY (look for 合計・お会計・total)
-- confidence: 0.0–1.0 reflecting extraction accuracy`;
+- date: receipt date (use ${today} if not visible)
+- merchant: store name exactly as printed
+- amount: total in JPY as integer
+- confidence: 0.0-1.0`;
 
       const result = await model.generateContent([
         { inlineData: { mimeType: imageMimeType, data: imageBase64 } },
@@ -53,9 +54,12 @@ Rules:
       ]);
 
       const text = result.response.text().trim();
+      console.log('[analyze] Gemini raw response:', text.slice(0, 200));
+
       const match = text.match(/\{[\s\S]*?\}/);
       if (match) {
         const parsed = JSON.parse(match[0]);
+        console.log('[analyze] parsed:', parsed);
         return NextResponse.json({
           date: String(parsed.date ?? today),
           merchant: String(parsed.merchant ?? '不明'),
@@ -64,12 +68,14 @@ Rules:
           confidence: Number(parsed.confidence) || 0.5,
         });
       }
+      console.log('[analyze] no JSON found in Gemini response');
     } catch (e) {
-      console.error('Gemini error:', e);
+      console.error('[analyze] Gemini API error:', e);
     }
   }
 
-  // ── フォールバック（モックデータ）──────────────────────────────────────────
+  // ── フォールバック（モック）────────────────────────────────────────────────
+  console.log('[analyze] returning mock data');
   await new Promise((r) => setTimeout(r, 80));
   return NextResponse.json({
     date: today,
