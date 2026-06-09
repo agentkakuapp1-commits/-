@@ -35,7 +35,7 @@ export async function POST(req: NextRequest): Promise<NextResponse<ReceiptData>>
     try {
       const { GoogleGenerativeAI } = await import('@google/generative-ai');
       const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-      const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+      const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
 
       const prompt = `You are a Japanese receipt parser. Analyze this receipt image.
 Respond ONLY with a single JSON object — no markdown, no explanation.
