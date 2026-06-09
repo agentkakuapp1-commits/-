@@ -215,8 +215,7 @@ export default function Home() {
 
           {/* Hidden file input */}
           <input ref={fileRef} type="file" accept="image/*"
-            // @ts-expect-error capture is valid HTML attr
-            capture="environment"
+            {...({ capture: 'environment' } as object)}
             className="hidden" onChange={handleImageSelect} />
 
           {/* ══ SCAN TAB ════════════════════════════════════════════════════ */}
@@ -426,7 +425,8 @@ export default function Home() {
                               <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />
                             ))}
                           </Pie>
-                          <Tooltip formatter={(v: number) => `¥${v.toLocaleString()}`} />
+                          {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
+                          <Tooltip formatter={(v: any) => `¥${Number(v).toLocaleString()}`} />
                         </PieChart>
                       </ResponsiveContainer>
                       <div className="flex flex-col gap-1.5 mt-1">
@@ -451,11 +451,12 @@ export default function Home() {
                       <ResponsiveContainer width="100%" height={120}>
                         <BarChart data={report.monthlyTotals} margin={{ top: 0, right: 0, left: -20, bottom: 0 }}>
                           <XAxis dataKey="month" tick={{ fontSize: 9 }}
-                            tickFormatter={(m: string) => `${parseInt(m.slice(5))}月`} />
+                            tickFormatter={(m) => `${parseInt(String(m).slice(5))}月`} />
                           <YAxis tick={{ fontSize: 9 }} />
+                          {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
                           <Tooltip
-                            formatter={(v: number) => `¥${v.toLocaleString()}`}
-                            labelFormatter={(m: string) => m} />
+                            formatter={(v: any) => `¥${Number(v).toLocaleString()}`}
+                            labelFormatter={(m: any) => String(m)} />
                           <Bar dataKey="total" fill="#4f46e5" radius={[4, 4, 0, 0]} />
                         </BarChart>
                       </ResponsiveContainer>
@@ -500,13 +501,16 @@ export default function Home() {
 
         {/* ── Bottom Tabs ──────────────────────────────────────────────────── */}
         <div className="border-t border-gray-100 grid grid-cols-2 flex-shrink-0">
-          {([['scan', Camera, t.tabScan], ['report', BarChart2, t.tabReport]] as const).map(([key, Icon, label]) => (
-            <button key={key} onClick={() => setTab(key as Tab)}
-              className={`py-3 flex flex-col items-center gap-1 transition-all ${tab === key ? 'text-indigo-600' : 'text-gray-400 hover:text-gray-600'}`}>
-              <Icon className="w-5 h-5" />
-              <span className="text-xs font-semibold">{label}</span>
-            </button>
-          ))}
+            <button onClick={() => setTab('scan')}
+            className={`py-3 flex flex-col items-center gap-1 transition-all ${tab === 'scan' ? 'text-indigo-600' : 'text-gray-400 hover:text-gray-600'}`}>
+            <Camera className="w-5 h-5" />
+            <span className="text-xs font-semibold">{t.tabScan}</span>
+          </button>
+          <button onClick={() => setTab('report')}
+            className={`py-3 flex flex-col items-center gap-1 transition-all ${tab === 'report' ? 'text-indigo-600' : 'text-gray-400 hover:text-gray-600'}`}>
+            <BarChart2 className="w-5 h-5" />
+            <span className="text-xs font-semibold">{t.tabReport}</span>
+          </button>
         </div>
       </div>
     </main>
