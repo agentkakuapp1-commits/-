@@ -39,7 +39,7 @@ export async function POST(req: NextRequest): Promise<NextResponse<ReceiptData>>
     try {
       const { GoogleGenerativeAI } = await import('@google/generative-ai');
       const genAI = new GoogleGenerativeAI(apiKey);
-      const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+      const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
 
       const prompt = `Parse this receipt image. Respond ONLY with a single JSON object — no markdown, no explanation.
 Format: {"date":"YYYY-MM-DD","merchant":"store name","amount":1234,"confidence":0.9}
