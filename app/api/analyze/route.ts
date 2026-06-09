@@ -24,23 +24,18 @@ export async function POST(req: NextRequest): Promise<NextResponse<ReceiptData>>
       imageMimeType = file.type || 'image/jpeg';
       console.log(`[analyze] image received: ${file.name}, ${file.size}bytes, ${imageMimeType}`);
     } else {
-      console.log('[analyze] no image in FormData — using mock');
+      console.log('[analyze] no image in FormData');
     }
   } catch (e) {
     console.error('[analyze] FormData parse error:', e);
   }
 
-  // ── API キー確認 ────────────────────────────────────────────────────────────
   const apiKey = process.env.GEMINI_API_KEY;
   console.log(`[analyze] GEMINI_API_KEY set: ${!!apiKey}, imageBase64 set: ${!!imageBase64}`);
 
-  // ── Gemini Vision で解析 ───────────────────────────────────────────────────
+  // ── Gemini v1 REST API で解析（SDKを使わず直接呼び出し）─────────────────────
   if (apiKey && imageBase64) {
     try {
-      const { GoogleGenerativeAI } = await import('@google/generative-ai');
-      const genAI = new GoogleGenerativeAI(apiKey);
-      const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
-
       const prompt = `Parse this receipt image. Respond ONLY with a single JSON object — no markdown, no explanation.
 Format: {"date":"YYYY-MM-DD","merchant":"store name","amount":1234,"confidence":0.9}
 - date: receipt date (use ${today} if not visible)
@@ -48,13 +43,31 @@ Format: {"date":"YYYY-MM-DD","merchant":"store name","amount":1234,"confidence":
 - amount: total in JPY as integer
 - confidence: 0.0-1.0`;
 
-      const result = await model.generateContent([
-        { inlineData: { mimeType: imageMimeType, data: imageBase64 } },
-        prompt,
-      ]);
+      const res = await fetch(
+        `https://generativelanguage.googleapis.com/v1/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{
+              parts: [
+                { inline_data: { mime_type: imageMimeType, data: imageBase64 } },
+                { text: prompt },
+              ],
+            }],
+          }),
+        }
+      );
 
-      const text = result.response.text().trim();
-      console.log('[analyze] Gemini raw response:', text.slice(0, 200));
+      if (!res.ok) {
+        const errText = await res.text();
+        console.error(`[analyze] Gemini REST error ${res.status}:`, errText.slice(0, 300));
+        throw new Error(`${res.status}: ${errText}`);
+      }
+
+      const json = await res.json();
+      const text: string = json.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
+      console.log('[analyze] Gemini response:', text.slice(0, 200));
 
       const match = text.match(/\{[\s\S]*?\}/);
       if (match) {
@@ -68,9 +81,9 @@ Format: {"date":"YYYY-MM-DD","merchant":"store name","amount":1234,"confidence":
           confidence: Number(parsed.confidence) || 0.5,
         });
       }
-      console.log('[analyze] no JSON found in Gemini response');
+      console.log('[analyze] no JSON found in Gemini response:', text);
     } catch (e) {
-      console.error('[analyze] Gemini API error:', e);
+      console.error('[analyze] error:', e);
     }
   }
 
