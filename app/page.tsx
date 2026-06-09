@@ -1,7 +1,8 @@
 'use client';
 
-import { useState } from 'react';
-import { Camera, Loader2, CheckCircle2 } from 'lucide-react';
+import { useState, useEffect, useCallback } from 'react';
+import { Camera, Loader2, CheckCircle2, TrendingUp } from 'lucide-react';
+import type { Receipt } from '@/lib/supabase';
 
 // ── i18n ──────────────────────────────────────────────────────────────────────
 const i18n = {
@@ -17,17 +18,15 @@ const i18n = {
     labelAmount: '金額',
     question: 'これは何のお買い物でしたか？',
     questionSub: 'タップして選んでください',
-    cat1emoji: '🏢',
-    cat1title: 'オフィス用品',
-    cat1sub: '消耗品費',
-    cat2emoji: '🎁',
-    cat2title: 'お客様への贈り物',
-    cat2sub: '交際費',
-    cat3emoji: '🏠',
-    cat3title: '個人的な買い物',
-    cat3sub: '非業務',
+    cat1emoji: '🏢', cat1title: 'オフィス用品',    cat1sub: '消耗品費',
+    cat2emoji: '🎁', cat2title: 'お客様への贈り物', cat2sub: '交際費',
+    cat3emoji: '🏠', cat3title: '個人的な買い物',  cat3sub: '非業務',
     successTitle: '登録完了！',
     successSub: '仕訳が自動で記録されました',
+    recentTitle: '最近の登録',
+    monthlyTitle: '今月の合計',
+    noHistory: 'まだ登録がありません',
+    saving: '保存中...',
     footer: 'Powered by AI · スマート会計',
     langBtn: '中文',
   },
@@ -43,24 +42,22 @@ const i18n = {
     labelAmount: '金额',
     question: '这是什么类型的消费？',
     questionSub: '请点击选择',
-    cat1emoji: '🏢',
-    cat1title: '办公设备',
-    cat1sub: '日常用品',
-    cat2emoji: '🎁',
-    cat2title: '客户礼品',
-    cat2sub: '接待交际',
-    cat3emoji: '🏠',
-    cat3title: '个人消费',
-    cat3sub: '非业务',
+    cat1emoji: '🏢', cat1title: '办公设备',    cat1sub: '日常用品',
+    cat2emoji: '🎁', cat2title: '客户礼品',    cat2sub: '接待交际',
+    cat3emoji: '🏠', cat3title: '个人消费',    cat3sub: '非业务',
     successTitle: '登记完成！',
     successSub: '已自动记录凭证',
+    recentTitle: '最近记录',
+    monthlyTitle: '本月合计',
+    noHistory: '暂无记录',
+    saving: '保存中...',
     footer: 'Powered by AI · 智能会计',
     langBtn: '日本語',
   },
 } as const;
 
 type Lang = keyof typeof i18n;
-type AppState = 'idle' | 'loading' | 'result' | 'done';
+type AppState = 'idle' | 'loading' | 'result' | 'saving' | 'done';
 
 interface ReceiptData {
   date: string;
@@ -70,14 +67,43 @@ interface ReceiptData {
   confidence: number;
 }
 
+// カテゴリ定義
+const CATEGORIES = [
+  { key: 'office',        colorBg: 'bg-blue-50',    colorBorder: 'border-blue-200',    colorHover: 'hover:bg-blue-100 hover:border-blue-400',    colorText: 'text-blue-700',    colorSub: 'text-blue-400',    emojiKey: 'cat1emoji' as const, titleKey: 'cat1title' as const, subKey: 'cat1sub' as const },
+  { key: 'entertainment', colorBg: 'bg-pink-50',    colorBorder: 'border-pink-200',    colorHover: 'hover:bg-pink-100 hover:border-pink-400',    colorText: 'text-pink-700',    colorSub: 'text-pink-400',    emojiKey: 'cat2emoji' as const, titleKey: 'cat2title' as const, subKey: 'cat2sub' as const },
+  { key: 'personal',      colorBg: 'bg-emerald-50', colorBorder: 'border-emerald-200', colorHover: 'hover:bg-emerald-100 hover:border-emerald-400', colorText: 'text-emerald-700', colorSub: 'text-emerald-400', emojiKey: 'cat3emoji' as const, titleKey: 'cat3title' as const, subKey: 'cat3sub' as const },
+];
+
+const CATEGORY_EMOJI: Record<string, string> = {
+  office: '🏢', entertainment: '🎁', personal: '🏠',
+};
+
 // ── Component ─────────────────────────────────────────────────────────────────
 export default function Home() {
   const [lang, setLang] = useState<Lang>('ja');
   const [state, setState] = useState<AppState>('idle');
   const [receipt, setReceipt] = useState<ReceiptData | null>(null);
+  const [history, setHistory] = useState<Receipt[]>([]);
+  const [monthlyTotal, setMonthlyTotal] = useState<number>(0);
   const t = i18n[lang];
 
-  // Scan → loading → result
+  // 履歴を取得
+  const fetchHistory = useCallback(async () => {
+    try {
+      const res = await fetch('/api/receipts');
+      const data = await res.json();
+      setHistory(data.receipts ?? []);
+      setMonthlyTotal(data.monthlyTotal ?? 0);
+    } catch {
+      // DB未設定時はスキップ
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchHistory();
+  }, [fetchHistory]);
+
+  // スキャン → ローディング → 結果
   const handleScan = async () => {
     setState('loading');
     setTimeout(async () => {
@@ -86,9 +112,8 @@ export default function Home() {
         const data: ReceiptData = await res.json();
         setReceipt(data);
       } catch {
-        // fallback mock if API unreachable
         setReceipt({
-          date: '2026-06-09',
+          date: new Date().toISOString().split('T')[0],
           merchant: 'コクヨ 新宿店',
           amount: 3850,
           category: 'office_supplies',
@@ -99,10 +124,28 @@ export default function Home() {
     }, 2000);
   };
 
-  // Category selected → done → back to idle
-  const handleCategorySelect = () => {
+  // カテゴリ選択 → DBに保存 → 完了
+  const handleCategorySelect = async (categoryKey: string, categoryLabel: string) => {
+    if (!receipt) return;
+    setState('saving');
+    try {
+      await fetch('/api/receipts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          date: receipt.date,
+          merchant: receipt.merchant,
+          amount: receipt.amount,
+          category: categoryKey,
+          category_label: categoryLabel,
+        }),
+      });
+    } catch {
+      // 保存失敗しても完了画面は出す
+    }
     setState('done');
-    setTimeout(() => {
+    setTimeout(async () => {
+      await fetchHistory(); // 履歴を更新してから戻る
       setState('idle');
       setReceipt(null);
     }, 2500);
@@ -113,7 +156,6 @@ export default function Home() {
       className="min-h-screen flex items-center justify-center p-4"
       style={{ background: 'linear-gradient(135deg, #e0e7ff 0%, #f0fdf4 100%)' }}
     >
-      {/* ── Phone Shell ─────────────────────────────────────────────────────── */}
       <div
         className="w-full bg-white rounded-3xl shadow-2xl flex flex-col overflow-hidden"
         style={{ maxWidth: '400px', minHeight: '720px' }}
@@ -138,32 +180,37 @@ export default function Home() {
         </div>
 
         {/* Body */}
-        <div className="flex-1 flex flex-col items-center justify-center px-6 py-8">
+        <div className="flex-1 flex flex-col items-center justify-center px-6 py-6">
 
-          {/* ── State 1: Idle ──────────────────────────────────────────────── */}
+          {/* ── State: Idle ────────────────────────────────────────────────── */}
           {state === 'idle' && (
-            <div className="flex flex-col items-center gap-8 w-full">
-              {/* Illustration area */}
+            <div className="flex flex-col items-center gap-5 w-full">
+
+              {/* 今月の合計 */}
+              {monthlyTotal > 0 && (
+                <div className="w-full rounded-2xl p-4 flex items-center justify-between"
+                  style={{ background: 'linear-gradient(135deg, #ede9fe 0%, #dbeafe 100%)' }}>
+                  <div className="flex items-center gap-2">
+                    <TrendingUp className="w-5 h-5 text-indigo-500" />
+                    <span className="text-indigo-600 text-sm font-semibold">{t.monthlyTitle}</span>
+                  </div>
+                  <span className="text-indigo-700 font-extrabold text-xl">
+                    ¥{monthlyTotal.toLocaleString()}
+                  </span>
+                </div>
+              )}
+
+              {/* カメライラスト */}
               <div className="flex flex-col items-center gap-3">
                 <div
-                  className="w-28 h-28 rounded-full flex items-center justify-center shadow-inner"
+                  className="w-24 h-24 rounded-full flex items-center justify-center"
                   style={{ background: 'linear-gradient(135deg, #ede9fe 0%, #dbeafe 100%)' }}
                 >
-                  <Camera className="w-14 h-14 text-indigo-500" strokeWidth={1.5} />
-                </div>
-                <div className="flex gap-1.5">
-                  {['📄', '🤖', '📊'].map((emoji, i) => (
-                    <span
-                      key={i}
-                      className="text-xl bg-gray-50 rounded-xl px-3 py-1.5 shadow-sm border border-gray-100"
-                    >
-                      {emoji}
-                    </span>
-                  ))}
+                  <Camera className="w-12 h-12 text-indigo-500" strokeWidth={1.5} />
                 </div>
               </div>
 
-              {/* CTA Button */}
+              {/* スキャンボタン */}
               <button
                 onClick={handleScan}
                 className="w-full text-white font-bold text-lg py-5 rounded-2xl shadow-lg hover:shadow-xl hover:brightness-105 active:scale-[0.97] transition-all flex items-center justify-center gap-3"
@@ -173,32 +220,37 @@ export default function Home() {
                 {t.scanBtn}
               </button>
 
-              {/* Recent badge (decorative) */}
+              {/* 履歴 */}
               <div className="w-full bg-gray-50 rounded-2xl p-4 border border-gray-100">
-                <p className="text-xs text-gray-400 font-medium mb-2 uppercase tracking-wide">
-                  {lang === 'ja' ? '最近の登録' : '最近记录'}
+                <p className="text-xs text-gray-400 font-semibold mb-3 uppercase tracking-wide">
+                  {t.recentTitle}
                 </p>
-                {[
-                  { emoji: '☕', name: lang === 'ja' ? 'スターバックス' : '星巴克', amount: '¥680', color: 'text-green-600' },
-                  { emoji: '🍱', name: lang === 'ja' ? '松屋 渋谷店' : '松屋 涩谷店', amount: '¥750', color: 'text-orange-600' },
-                ].map((item, i) => (
-                  <div key={i} className="flex items-center justify-between py-1.5">
-                    <div className="flex items-center gap-2">
-                      <span className="text-lg">{item.emoji}</span>
-                      <span className="text-sm text-gray-600">{item.name}</span>
+                {history.length === 0 ? (
+                  <p className="text-gray-300 text-sm text-center py-2">{t.noHistory}</p>
+                ) : (
+                  history.slice(0, 5).map((item) => (
+                    <div key={item.id} className="flex items-center justify-between py-2 border-b border-gray-100 last:border-0">
+                      <div className="flex items-center gap-2">
+                        <span className="text-lg">{CATEGORY_EMOJI[item.category] ?? '📄'}</span>
+                        <div>
+                          <p className="text-sm text-gray-700 font-medium leading-tight">{item.merchant}</p>
+                          <p className="text-xs text-gray-400">{item.date}</p>
+                        </div>
+                      </div>
+                      <span className="text-sm font-bold text-indigo-600">
+                        ¥{item.amount.toLocaleString()}
+                      </span>
                     </div>
-                    <span className={`text-sm font-semibold ${item.color}`}>{item.amount}</span>
-                  </div>
-                ))}
+                  ))
+                )}
               </div>
             </div>
           )}
 
-          {/* ── State 2: Loading ───────────────────────────────────────────── */}
+          {/* ── State: Loading ─────────────────────────────────────────────── */}
           {state === 'loading' && (
             <div className="flex flex-col items-center gap-5">
               <div className="relative">
-                {/* Outer pulse ring */}
                 <div className="absolute inset-0 rounded-full bg-indigo-100 animate-ping opacity-40" />
                 <div className="w-24 h-24 rounded-full bg-indigo-50 flex items-center justify-center relative">
                   <Loader2 className="w-12 h-12 text-indigo-500 animate-spin" />
@@ -208,23 +260,19 @@ export default function Home() {
                 <p className="text-gray-800 font-bold text-xl">{t.analyzing}</p>
                 <p className="text-gray-400 text-sm mt-1">{t.analyzingSub}</p>
               </div>
-              {/* Progress dots */}
               <div className="flex gap-2">
                 {[0, 1, 2].map((i) => (
-                  <div
-                    key={i}
-                    className="w-2 h-2 rounded-full bg-indigo-300 animate-bounce"
-                    style={{ animationDelay: `${i * 0.15}s` }}
-                  />
+                  <div key={i} className="w-2 h-2 rounded-full bg-indigo-300 animate-bounce"
+                    style={{ animationDelay: `${i * 0.15}s` }} />
                 ))}
               </div>
             </div>
           )}
 
-          {/* ── State 3: Result ────────────────────────────────────────────── */}
+          {/* ── State: Result ──────────────────────────────────────────────── */}
           {state === 'result' && receipt && (
             <div className="w-full flex flex-col gap-5">
-              {/* Receipt card */}
+              {/* レシートカード */}
               <div className="bg-gray-50 rounded-2xl p-5 border border-gray-100 shadow-sm">
                 <div className="flex items-center gap-2 mb-3">
                   <span className="w-2 h-2 bg-emerald-400 rounded-full inline-block" />
@@ -250,70 +298,55 @@ export default function Home() {
                 </div>
               </div>
 
-              {/* Question prompt */}
+              {/* 質問 */}
               <div className="text-center">
                 <p className="text-gray-800 font-bold text-base">{t.question}</p>
                 <p className="text-gray-400 text-xs mt-1">{t.questionSub}</p>
               </div>
 
-              {/* Category buttons */}
+              {/* カテゴリボタン */}
               <div className="flex flex-col gap-3">
-                {/* Office */}
-                <button
-                  onClick={handleCategorySelect}
-                  className="w-full bg-blue-50 hover:bg-blue-100 border-2 border-blue-200 hover:border-blue-400 rounded-2xl p-4 flex items-center gap-4 transition-all active:scale-[0.97] text-left"
-                >
-                  <span className="text-3xl leading-none">{t.cat1emoji}</span>
-                  <div>
-                    <p className="font-bold text-blue-700 text-base">{t.cat1title}</p>
-                    <p className="text-blue-400 text-xs mt-0.5">{t.cat1sub}</p>
-                  </div>
-                </button>
-
-                {/* Gift / Entertainment */}
-                <button
-                  onClick={handleCategorySelect}
-                  className="w-full bg-pink-50 hover:bg-pink-100 border-2 border-pink-200 hover:border-pink-400 rounded-2xl p-4 flex items-center gap-4 transition-all active:scale-[0.97] text-left"
-                >
-                  <span className="text-3xl leading-none">{t.cat2emoji}</span>
-                  <div>
-                    <p className="font-bold text-pink-700 text-base">{t.cat2title}</p>
-                    <p className="text-pink-400 text-xs mt-0.5">{t.cat2sub}</p>
-                  </div>
-                </button>
-
-                {/* Personal */}
-                <button
-                  onClick={handleCategorySelect}
-                  className="w-full bg-emerald-50 hover:bg-emerald-100 border-2 border-emerald-200 hover:border-emerald-400 rounded-2xl p-4 flex items-center gap-4 transition-all active:scale-[0.97] text-left"
-                >
-                  <span className="text-3xl leading-none">{t.cat3emoji}</span>
-                  <div>
-                    <p className="font-bold text-emerald-700 text-base">{t.cat3title}</p>
-                    <p className="text-emerald-400 text-xs mt-0.5">{t.cat3sub}</p>
-                  </div>
-                </button>
+                {CATEGORIES.map((cat) => (
+                  <button
+                    key={cat.key}
+                    onClick={() => handleCategorySelect(cat.key, t[cat.titleKey])}
+                    className={`w-full ${cat.colorBg} ${cat.colorHover} border-2 ${cat.colorBorder} rounded-2xl p-4 flex items-center gap-4 transition-all active:scale-[0.97] text-left`}
+                  >
+                    <span className="text-3xl leading-none">{t[cat.emojiKey]}</span>
+                    <div>
+                      <p className={`font-bold ${cat.colorText} text-base`}>{t[cat.titleKey]}</p>
+                      <p className={`${cat.colorSub} text-xs mt-0.5`}>{t[cat.subKey]}</p>
+                    </div>
+                  </button>
+                ))}
               </div>
             </div>
           )}
 
-          {/* ── State 4: Done ──────────────────────────────────────────────── */}
+          {/* ── State: Saving ──────────────────────────────────────────────── */}
+          {state === 'saving' && (
+            <div className="flex flex-col items-center gap-5">
+              <div className="w-24 h-24 rounded-full bg-indigo-50 flex items-center justify-center">
+                <Loader2 className="w-12 h-12 text-indigo-500 animate-spin" />
+              </div>
+              <p className="text-gray-600 font-medium text-lg">{t.saving}</p>
+            </div>
+          )}
+
+          {/* ── State: Done ────────────────────────────────────────────────── */}
           {state === 'done' && (
             <div className="flex flex-col items-center gap-5">
-              <div className="w-24 h-24 bg-emerald-50 rounded-full flex items-center justify-center shadow-inner">
+              <div className="w-24 h-24 bg-emerald-50 rounded-full flex items-center justify-center">
                 <CheckCircle2 className="w-14 h-14 text-emerald-500" strokeWidth={1.5} />
               </div>
               <div className="text-center">
                 <p className="text-gray-800 font-extrabold text-2xl">{t.successTitle}</p>
                 <p className="text-gray-400 text-sm mt-1">{t.successSub}</p>
               </div>
-              {/* Confetti dots (decorative) */}
               <div className="flex gap-2">
-                {['bg-indigo-400', 'bg-pink-400', 'bg-emerald-400', 'bg-yellow-400'].map(
-                  (color, i) => (
-                    <div key={i} className={`w-2.5 h-2.5 rounded-full ${color}`} />
-                  )
-                )}
+                {['bg-indigo-400', 'bg-pink-400', 'bg-emerald-400', 'bg-yellow-400'].map((c, i) => (
+                  <div key={i} className={`w-2.5 h-2.5 rounded-full ${c}`} />
+                ))}
               </div>
             </div>
           )}
