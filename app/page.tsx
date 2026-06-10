@@ -4,7 +4,7 @@ import {
   Camera, BarChart2, FileText, BookOpen,
   ChevronLeft, ChevronRight, Download, AlertTriangle,
   Check, Edit2, RefreshCw, Trash2, X, Images, Loader2,
-  CheckCircle2, Settings, Plus, GripVertical, Table2,
+  CheckCircle2, Settings, Plus, Menu, List,
 } from 'lucide-react';
 import {
   PieChart, Pie, Cell, Tooltip, ResponsiveContainer,
@@ -977,7 +977,7 @@ export default function Home() {
               <div className="bg-white rounded-2xl shadow-sm overflow-hidden border border-gray-100">
                 <div className="bg-indigo-700 text-white px-4 py-2.5 flex items-center justify-between">
                   <span className="font-semibold text-sm flex items-center gap-1.5">
-                    <Table2 size={14} />{t.bsTitle}
+                    <List size={14} />{t.bsTitle}
                   </span>
                   <button onClick={() => window.open(`/api/export?format=bs&month=${reportMonth}`, '_blank')}
                     className="text-xs border border-white/40 px-2 py-0.5 rounded-full hover:bg-white/20">
@@ -1139,7 +1139,7 @@ export default function Home() {
                 </button>
                 <button onClick={() => window.open(`/api/export?format=kanri&month=${exportMonth}`, '_blank')}
                   className="w-full bg-violet-600 hover:bg-violet-700 text-white py-3.5 px-4 rounded-2xl flex items-center gap-3 font-medium shadow active:scale-95 transition-transform">
-                  <Table2 size={18} />{t.kanriReport}
+                  <List size={18} />{t.kanriReport}
                 </button>
                 <button onClick={() => window.open(`/api/export?format=bs&month=${exportMonth}`, '_blank')}
                   className="w-full bg-slate-700 hover:bg-slate-800 text-white py-3.5 px-4 rounded-2xl flex items-center gap-3 font-medium shadow active:scale-95 transition-transform">
@@ -1178,7 +1178,7 @@ export default function Home() {
                   <div className="space-y-1.5">
                     {masterDebits.map((acc, i) => (
                       <div key={i} className="flex items-center gap-2 bg-blue-50 rounded-lg px-3 py-2">
-                        <GripVertical size={13} className="text-gray-400 flex-shrink-0" />
+                        <Menu size={13} className="text-gray-400 flex-shrink-0" />
                         <span className="flex-1 text-sm text-gray-700">{acc}</span>
                         <button onClick={() => setMasterDebits(prev => prev.filter((_, j) => j !== i))}
                           className="text-gray-300 hover:text-red-400 p-0.5">
@@ -1207,7 +1207,7 @@ export default function Home() {
                   <div className="space-y-1.5">
                     {masterCredits.map((acc, i) => (
                       <div key={i} className="flex items-center gap-2 bg-emerald-50 rounded-lg px-3 py-2">
-                        <GripVertical size={13} className="text-gray-400 flex-shrink-0" />
+                        <Menu size={13} className="text-gray-400 flex-shrink-0" />
                         <span className="flex-1 text-sm text-gray-700">{acc}</span>
                         <button onClick={() => setMasterCredits(prev => prev.filter((_, j) => j !== i))}
                           className="text-gray-300 hover:text-red-400 p-0.5">
