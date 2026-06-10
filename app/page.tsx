@@ -4,7 +4,7 @@ import {
   Camera, BarChart2, FileText, BookOpen,
   ChevronLeft, ChevronRight, Download, AlertTriangle,
   Check, Edit2, RefreshCw, Trash2, X, Images, Loader2,
-  CheckCircle2,
+  CheckCircle2, Settings, Plus, GripVertical, Table2,
 } from 'lucide-react';
 import {
   PieChart, Pie, Cell, Tooltip, ResponsiveContainer,
@@ -54,8 +54,13 @@ interface ReportData {
 interface Anomaly { type: string; message: string; severity: 'high' | 'medium'; }
 
 // ── Constants ──────────────────────────────────────────────────────────────────
-const DEBIT_ACCOUNTS  = ['消耗品費','交際費','旅費交通費','会議費','広告宣伝費','通信費','水道光熱費','地代家賃','雑費'];
-const CREDIT_ACCOUNTS = ['現金','未払金','普通預金'];
+// Default account lists — user can edit these in AccountMaster modal
+const DEFAULT_DEBIT: string[]  = ['消耗品費','交際費','旅費交通費','会議費','広告宣伝費','通信費','水道光熱費','地代家賃','外注費','福利厚生費','修繕費','雑費'];
+const DEFAULT_CREDIT: string[] = ['現金','未払金','普通預金','クレジットカード'];
+
+// For backwards compat — component reads from state, these are just used as fallback
+const DEBIT_ACCOUNTS  = DEFAULT_DEBIT;
+const CREDIT_ACCOUNTS = DEFAULT_CREDIT;
 const PIE_COLORS      = ['#6C63FF','#FF6B9D','#43C59E','#FFB347','#87CEEB','#DDA0DD'];
 
 const CATS = [
@@ -97,6 +102,22 @@ const T = {
     batchProgress:'分析中…', batchDone:'分析完了',
     batchSaved:'保存済み',
     selectCategory:'カテゴリを選択',
+    kanriReport:'経費管理表を開く（印刷用）',
+    bsReport:'貸借対照表を開く（印刷用）',
+    accountMaster:'勘定科目マスタ',
+    debitAccounts:'借方勘定科目（費用）',
+    creditAccounts:'貸方勘定科目（支払）',
+    addAccount:'科目を追加',
+    accountPlaceholder:'例：接待交際費',
+    bsTitle:'貸借対照表（月次）',
+    bsDebitSide:'借方（費用の部）',
+    bsCreditSide:'貸方（支払の部）',
+    bsTotal:'合計',
+    taxBreakdown:'消費税内訳',
+    tax8label:'軽減税率8%対象',
+    tax10label:'標準税率10%対象',
+    taxTotalLabel:'消費税合計',
+    noDataBs:'この月のデータがありません',
   },
   zh: {
     appName:'大鹤会计', subtitle:'AI自动生成分录与报销单',
@@ -129,6 +150,22 @@ const T = {
     batchProgress:'分析中…', batchDone:'分析完成',
     batchSaved:'已保存',
     selectCategory:'选择类别',
+    kanriReport:'费用管理表（打印用）',
+    bsReport:'资产负债表（打印用）',
+    accountMaster:'会计科目管理',
+    debitAccounts:'借方科目（费用）',
+    creditAccounts:'贷方科目（支付）',
+    addAccount:'添加科目',
+    accountPlaceholder:'例：招待费',
+    bsTitle:'月次资产负债表',
+    bsDebitSide:'借方（费用）',
+    bsCreditSide:'贷方（支付方式）',
+    bsTotal:'合计',
+    taxBreakdown:'消费税明细',
+    tax8label:'轻减税率8%',
+    tax10label:'标准税率10%',
+    taxTotalLabel:'消费税合计',
+    noDataBs:'本月暂无数据',
   },
 } as const;
 
@@ -201,6 +238,21 @@ export default function Home() {
   const [anomalies,   setAnomalies]   = useState<Anomaly[]>([]);
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
 
+  // Account master state
+  const [showAccountMaster, setShowAccountMaster] = useState(false);
+  const [masterDebits,  setMasterDebits]  = useState<string[]>(DEFAULT_DEBIT);
+  const [masterCredits, setMasterCredits] = useState<string[]>(DEFAULT_CREDIT);
+  const [newDebit,  setNewDebit]  = useState('');
+  const [newCredit, setNewCredit] = useState('');
+
+  // Balance sheet inline state
+  const [bsData, setBsData] = useState<{
+    debitMap: Record<string,number>;
+    creditMap: Record<string,number>;
+    tax8: number; tax10: number; taxTotal: number;
+    total: number;
+  } | null>(null);
+
   const fileRef      = useRef<HTMLInputElement>(null);
   const batchFileRef = useRef<HTMLInputElement>(null);
   const t = T[lang];
@@ -231,6 +283,30 @@ export default function Home() {
     const m = currentMonth();
     loadReport(m); loadAnomalies(m);
   }, [loadReceipts, loadReport, loadAnomalies]);
+
+  // Recompute BS whenever receipts or reportMonth changes
+  useEffect(() => {
+    computeBS(reportMonth, receipts);
+  }, [receipts, reportMonth, computeBS]);
+
+  // Compute inline balance sheet from receipts for a given month
+  const computeBS = useCallback((month: string, allReceipts: Receipt[]) => {
+    const filtered = allReceipts.filter(r => r.date?.startsWith(month));
+    if (filtered.length === 0) { setBsData(null); return; }
+    const debitMap: Record<string,number> = {};
+    const creditMap: Record<string,number> = {};
+    for (const r of filtered) {
+      const da = r.debit_account  ?? '消耗品費';
+      const ca = r.credit_account ?? '現金';
+      debitMap[da]  = (debitMap[da]  ?? 0) + r.amount;
+      creditMap[ca] = (creditMap[ca] ?? 0) + r.amount;
+    }
+    const tax8     = filtered.filter(r => (r.tax_rate ?? 10) === 8).reduce((s, r) => s + r.amount, 0);
+    const tax10    = filtered.filter(r => (r.tax_rate ?? 10) === 10).reduce((s, r) => s + r.amount, 0);
+    const taxTotal = filtered.reduce((s, r) => s + (r.tax_amount ?? 0), 0);
+    const total    = filtered.reduce((s, r) => s + r.amount, 0);
+    setBsData({ debitMap, creditMap, tax8, tax10, taxTotal, total });
+  }, []);
 
   // Journal month filtered + sorted
   const journalReceipts = receipts
@@ -437,12 +513,21 @@ export default function Home() {
                 <p className="text-indigo-200 text-xs mt-0.5">{t.subtitle}</p>
               </div>
             </div>
-            <button
-              onClick={() => setLang(l => l === 'ja' ? 'zh' : 'ja')}
-              className="border border-white/40 text-xs px-3 py-1.5 rounded-full hover:bg-white/20 transition-colors flex-shrink-0"
-            >
-              {t.switchLang}
-            </button>
+            <div className="flex items-center gap-2 flex-shrink-0">
+              <button
+                onClick={() => setShowAccountMaster(true)}
+                className="border border-white/40 p-1.5 rounded-full hover:bg-white/20 transition-colors"
+                title={t.accountMaster}
+              >
+                <Settings size={15} />
+              </button>
+              <button
+                onClick={() => setLang(l => l === 'ja' ? 'zh' : 'ja')}
+                className="border border-white/40 text-xs px-3 py-1.5 rounded-full hover:bg-white/20 transition-colors"
+              >
+                {t.switchLang}
+              </button>
+            </div>
           </div>
 
           <div className="mt-4 bg-white/20 rounded-xl px-4 py-2.5 flex justify-between items-center relative">
@@ -733,8 +818,8 @@ export default function Home() {
                       {showEditor ? (
                         <div className="space-y-2">
                           {([
-                            { label: t.debit,  val: editDebit,  set: setEditDebit,  opts: DEBIT_ACCOUNTS },
-                            { label: t.credit, val: editCredit, set: setEditCredit, opts: CREDIT_ACCOUNTS },
+                            { label: t.debit,  val: editDebit,  set: setEditDebit,  opts: masterDebits },
+                            { label: t.credit, val: editCredit, set: setEditCredit, opts: masterCredits },
                           ] as { label: string; val: string; set: (v: string) => void; opts: string[] }[]).map(({ label, val, set, opts }) => (
                             <div key={label}>
                               <label className="text-xs text-gray-500">{label}</label>
@@ -888,6 +973,68 @@ export default function Home() {
                 }}
               />
 
+              {/* ── Inline Balance Sheet ───────────────────────────── */}
+              <div className="bg-white rounded-2xl shadow-sm overflow-hidden border border-gray-100">
+                <div className="bg-indigo-700 text-white px-4 py-2.5 flex items-center justify-between">
+                  <span className="font-semibold text-sm flex items-center gap-1.5">
+                    <Table2 size={14} />{t.bsTitle}
+                  </span>
+                  <button onClick={() => window.open(`/api/export?format=bs&month=${reportMonth}`, '_blank')}
+                    className="text-xs border border-white/40 px-2 py-0.5 rounded-full hover:bg-white/20">
+                    印刷
+                  </button>
+                </div>
+                {!bsData ? (
+                  <div className="py-8 text-center text-gray-400 text-sm">{t.noDataBs}</div>
+                ) : (
+                  <div>
+                    <div className="grid grid-cols-2 divide-x divide-gray-200">
+                      {/* 借方 */}
+                      <div>
+                        <div className="bg-blue-50 px-3 py-1.5 text-xs font-bold text-blue-700 border-b border-gray-200">{t.bsDebitSide}</div>
+                        {Object.entries(bsData.debitMap).sort((a,b)=>b[1]-a[1]).map(([k,v])=>(
+                          <div key={k} className="flex justify-between px-3 py-1.5 border-b border-gray-100 text-xs">
+                            <span className="text-gray-700">{k}</span>
+                            <span className="font-medium">¥{v.toLocaleString('ja-JP')}</span>
+                          </div>
+                        ))}
+                        <div className="flex justify-between px-3 py-2 bg-blue-50 text-xs font-bold">
+                          <span>{t.bsTotal}</span>
+                          <span className="text-blue-700">¥{bsData.total.toLocaleString('ja-JP')}</span>
+                        </div>
+                      </div>
+                      {/* 貸方 */}
+                      <div>
+                        <div className="bg-emerald-50 px-3 py-1.5 text-xs font-bold text-emerald-700 border-b border-gray-200">{t.bsCreditSide}</div>
+                        {Object.entries(bsData.creditMap).sort((a,b)=>b[1]-a[1]).map(([k,v])=>(
+                          <div key={k} className="flex justify-between px-3 py-1.5 border-b border-gray-100 text-xs">
+                            <span className="text-gray-700">{k}</span>
+                            <span className="font-medium">¥{v.toLocaleString('ja-JP')}</span>
+                          </div>
+                        ))}
+                        <div className="flex justify-between px-3 py-2 bg-emerald-50 text-xs font-bold">
+                          <span>{t.bsTotal}</span>
+                          <span className="text-emerald-700">¥{bsData.total.toLocaleString('ja-JP')}</span>
+                        </div>
+                      </div>
+                    </div>
+                    {/* Tax breakdown */}
+                    <div className="px-3 py-2.5 bg-amber-50 border-t border-gray-200 space-y-1">
+                      <div className="text-xs font-bold text-amber-700 mb-1">{t.taxBreakdown}</div>
+                      <div className="flex justify-between text-xs text-gray-600">
+                        <span>{t.tax8label}</span><span>¥{bsData.tax8.toLocaleString('ja-JP')}</span>
+                      </div>
+                      <div className="flex justify-between text-xs text-gray-600">
+                        <span>{t.tax10label}</span><span>¥{bsData.tax10.toLocaleString('ja-JP')}</span>
+                      </div>
+                      <div className="flex justify-between text-xs font-bold text-amber-700 pt-1 border-t border-amber-200">
+                        <span>{t.taxTotalLabel}</span><span>¥{bsData.taxTotal.toLocaleString('ja-JP')}</span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+
               {anomalies.length > 0 ? (
                 <div className="space-y-2">
                   <h3 className="font-semibold text-gray-700 flex items-center gap-1.5 text-sm">
@@ -990,6 +1137,14 @@ export default function Home() {
                   className="w-full bg-indigo-600 hover:bg-indigo-700 text-white py-3.5 px-4 rounded-2xl flex items-center gap-3 font-medium shadow active:scale-95 transition-transform">
                   <FileText size={18} />{t.expenseReport}
                 </button>
+                <button onClick={() => window.open(`/api/export?format=kanri&month=${exportMonth}`, '_blank')}
+                  className="w-full bg-violet-600 hover:bg-violet-700 text-white py-3.5 px-4 rounded-2xl flex items-center gap-3 font-medium shadow active:scale-95 transition-transform">
+                  <Table2 size={18} />{t.kanriReport}
+                </button>
+                <button onClick={() => window.open(`/api/export?format=bs&month=${exportMonth}`, '_blank')}
+                  className="w-full bg-slate-700 hover:bg-slate-800 text-white py-3.5 px-4 rounded-2xl flex items-center gap-3 font-medium shadow active:scale-95 transition-transform">
+                  <BarChart2 size={18} />{t.bsReport}
+                </button>
               </div>
 
               <div className="bg-gray-50 rounded-xl p-4 text-xs text-gray-500 whitespace-pre-line leading-5 border border-gray-200">
@@ -998,6 +1153,89 @@ export default function Home() {
             </div>
           )}
         </div>
+
+        {/* ── Account Master Modal ────────────────────────────────────── */}
+        {showAccountMaster && (
+          <div className="fixed inset-0 bg-black/50 flex items-end justify-center z-50"
+            onClick={() => setShowAccountMaster(false)}>
+            <div className="bg-white w-full max-w-[420px] rounded-t-3xl max-h-[85vh] overflow-y-auto"
+              onClick={e => e.stopPropagation()}>
+              <div className="sticky top-0 bg-white border-b border-gray-100 px-5 py-4 flex items-center justify-between">
+                <h2 className="font-bold text-gray-800 flex items-center gap-2">
+                  <Settings size={16} className="text-indigo-600" />{t.accountMaster}
+                </h2>
+                <button onClick={() => setShowAccountMaster(false)} className="text-gray-400">
+                  <X size={20} />
+                </button>
+              </div>
+
+              <div className="p-5 space-y-6 pb-10">
+                {/* Debit accounts */}
+                <div>
+                  <h3 className="text-sm font-bold text-blue-700 mb-2 flex items-center gap-1">
+                    <span className="w-2 h-2 rounded-full bg-blue-500" />{t.debitAccounts}
+                  </h3>
+                  <div className="space-y-1.5">
+                    {masterDebits.map((acc, i) => (
+                      <div key={i} className="flex items-center gap-2 bg-blue-50 rounded-lg px-3 py-2">
+                        <GripVertical size={13} className="text-gray-400 flex-shrink-0" />
+                        <span className="flex-1 text-sm text-gray-700">{acc}</span>
+                        <button onClick={() => setMasterDebits(prev => prev.filter((_, j) => j !== i))}
+                          className="text-gray-300 hover:text-red-400 p-0.5">
+                          <X size={13} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="flex gap-2 mt-2">
+                    <input value={newDebit} onChange={e => setNewDebit(e.target.value)}
+                      onKeyDown={e => { if (e.key === 'Enter' && newDebit.trim()) { setMasterDebits(p => [...p, newDebit.trim()]); setNewDebit(''); }}}
+                      placeholder={t.accountPlaceholder}
+                      className="flex-1 border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:border-indigo-400" />
+                    <button onClick={() => { if (newDebit.trim()) { setMasterDebits(p => [...p, newDebit.trim()]); setNewDebit(''); }}}
+                      className="bg-blue-600 text-white px-3 py-1.5 rounded-lg text-sm flex items-center gap-1">
+                      <Plus size={13} />{t.addAccount}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Credit accounts */}
+                <div>
+                  <h3 className="text-sm font-bold text-emerald-700 mb-2 flex items-center gap-1">
+                    <span className="w-2 h-2 rounded-full bg-emerald-500" />{t.creditAccounts}
+                  </h3>
+                  <div className="space-y-1.5">
+                    {masterCredits.map((acc, i) => (
+                      <div key={i} className="flex items-center gap-2 bg-emerald-50 rounded-lg px-3 py-2">
+                        <GripVertical size={13} className="text-gray-400 flex-shrink-0" />
+                        <span className="flex-1 text-sm text-gray-700">{acc}</span>
+                        <button onClick={() => setMasterCredits(prev => prev.filter((_, j) => j !== i))}
+                          className="text-gray-300 hover:text-red-400 p-0.5">
+                          <X size={13} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="flex gap-2 mt-2">
+                    <input value={newCredit} onChange={e => setNewCredit(e.target.value)}
+                      onKeyDown={e => { if (e.key === 'Enter' && newCredit.trim()) { setMasterCredits(p => [...p, newCredit.trim()]); setNewCredit(''); }}}
+                      placeholder={t.accountPlaceholder}
+                      className="flex-1 border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:border-indigo-400" />
+                    <button onClick={() => { if (newCredit.trim()) { setMasterCredits(p => [...p, newCredit.trim()]); setNewCredit(''); }}}
+                      className="bg-emerald-600 text-white px-3 py-1.5 rounded-lg text-sm flex items-center gap-1">
+                      <Plus size={13} />{t.addAccount}
+                    </button>
+                  </div>
+                </div>
+
+                <button onClick={() => { setMasterDebits(DEFAULT_DEBIT); setMasterCredits(DEFAULT_CREDIT); }}
+                  className="w-full border border-gray-300 text-gray-500 py-2.5 rounded-xl text-sm">
+                  デフォルトに戻す
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* ── Delete confirm modal ────────────────────────────────────── */}
         {deleteTarget && (
