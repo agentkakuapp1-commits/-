@@ -143,6 +143,32 @@ function nextMonth(m: string) {
 }
 function currentMonth() { return new Date().toISOString().slice(0, 7); }
 
+// ── Logo with fallback ─────────────────────────────────────────────────────────
+function LogoImg() {
+  const [ok, setOk] = useState(true);
+  return ok ? (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      src="/logo.jpeg"
+      alt="大鶴会計"
+      className="w-10 h-10 rounded-full object-cover flex-shrink-0 border-2 border-white/30"
+      onError={() => setOk(false)}
+    />
+  ) : (
+    <div className="w-10 h-10 rounded-full bg-white/25 flex items-center justify-center flex-shrink-0 text-lg border-2 border-white/30">
+      🦢
+    </div>
+  );
+}
+
+function MascotImg({ className }: { className?: string }) {
+  const [ok, setOk] = useState(true);
+  return ok ? (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img src="/mascot.jpeg" alt="" className={className} onError={() => setOk(false)} />
+  ) : null;
+}
+
 // ── Component ──────────────────────────────────────────────────────────────────
 export default function Home() {
   const [lang, setLang]       = useState<Lang>('ja');
@@ -281,6 +307,14 @@ export default function Home() {
     e.target.value = '';
   };
 
+  const playComplete = () => {
+    try {
+      const audio = new Audio('/complete.mp3');
+      audio.volume = 0.7;
+      audio.play().catch(() => {});
+    } catch {}
+  };
+
   const handleBatchAnalyze = async () => {
     if (batchItems.length === 0) return;
     setBatchAnalyzing(true);
@@ -312,6 +346,7 @@ export default function Home() {
         };
       }));
       setBatchDoneCount(results?.length ?? 0);
+      playComplete();
     } catch {
       setBatchItems(prev => prev.map(it => ({ ...it, status: 'error' as const })));
     } finally {
@@ -385,14 +420,12 @@ export default function Home() {
         <div className="bg-gradient-to-r from-indigo-700 to-violet-700 text-white px-5 pt-10 pb-5 shadow-lg relative overflow-hidden">
           {/* mascot background silhouette */}
           <div className="absolute right-0 bottom-0 opacity-10 pointer-events-none">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src="/mascot.jpeg" alt="" className="h-28 object-contain" />
+            <MascotImg className="h-28 object-contain" />
           </div>
 
           <div className="flex items-start justify-between relative">
             <div className="flex items-center gap-3">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src="/logo.jpeg" alt="大鶴会計" className="w-10 h-10 rounded-full object-cover bg-white/20 flex-shrink-0" />
+              <LogoImg />
               <div>
                 <h1 className="text-2xl font-bold tracking-tight">{t.appName}</h1>
                 <p className="text-indigo-200 text-xs mt-0.5">{t.subtitle}</p>
@@ -462,8 +495,7 @@ export default function Home() {
 
                   {receipts.length === 0 && (
                     <div className="flex flex-col items-center py-10 gap-3 text-gray-400">
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img src="/mascot.jpeg" alt="" className="w-32 opacity-60 object-contain" />
+                      <MascotImg className="w-32 opacity-60 object-contain" />
                       <p className="text-sm">{t.noHistory}</p>
                     </div>
                   )}
@@ -743,8 +775,7 @@ export default function Home() {
                     <Check size={32} className="text-emerald-600" />
                   </div>
                   <p className="font-semibold text-gray-700">{t.saved}</p>
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src="/mascot.jpeg" alt="" className="w-28 object-contain opacity-80" />
+                  <MascotImg className="w-28 object-contain opacity-80" />
                   <button onClick={resetScan}
                     className="bg-indigo-600 text-white px-8 py-3 rounded-2xl font-medium shadow active:scale-95 transition-transform">
                     {t.scanAnother}
@@ -772,8 +803,7 @@ export default function Home() {
 
               {journalReceipts.length === 0 ? (
                 <div className="flex flex-col items-center py-12 gap-3 text-gray-400">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src="/mascot.jpeg" alt="" className="w-24 opacity-40 object-contain" />
+                  <MascotImg className="w-24 opacity-40 object-contain" />
                   <p className="text-sm">{t.noData}</p>
                 </div>
               ) : journalReceipts.map(r => (
