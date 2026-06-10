@@ -262,20 +262,20 @@ export default function Home() {
     try {
       const r = await fetch('/api/receipts'); const j = await r.json();
       setReceipts(j.receipts ?? []); setMonthTotal(j.monthTotal ?? 0);
-    } catch {}
+    } catch (_e) {}
   }, []);
 
   const loadReport = useCallback(async (m: string) => {
     try {
       const r = await fetch(`/api/report?month=${m}`); setReport(await r.json());
-    } catch {}
+    } catch (_e) {}
   }, []);
 
   const loadAnomalies = useCallback(async (m: string) => {
     try {
       const r = await fetch(`/api/anomaly?month=${m}`); const j = await r.json();
       setAnomalies(j.alerts ?? []);
-    } catch {}
+    } catch (_e) {}
   }, []);
 
   useEffect(() => {
@@ -283,11 +283,6 @@ export default function Home() {
     const m = currentMonth();
     loadReport(m); loadAnomalies(m);
   }, [loadReceipts, loadReport, loadAnomalies]);
-
-  // Recompute BS whenever receipts or reportMonth changes
-  useEffect(() => {
-    computeBS(reportMonth, receipts);
-  }, [receipts, reportMonth, computeBS]);
 
   // Compute inline balance sheet from receipts for a given month
   const computeBS = useCallback((month: string, allReceipts: Receipt[]) => {
@@ -307,6 +302,11 @@ export default function Home() {
     const total    = filtered.reduce((s, r) => s + r.amount, 0);
     setBsData({ debitMap, creditMap, tax8, tax10, taxTotal, total });
   }, []);
+
+  // Recompute BS whenever receipts or reportMonth changes
+  useEffect(() => {
+    computeBS(reportMonth, receipts);
+  }, [receipts, reportMonth, computeBS]);
 
   // Journal month filtered + sorted
   const journalReceipts = receipts
@@ -390,7 +390,7 @@ export default function Home() {
       const audio = new Audio('/complete.mp3');
       audio.volume = 0.7;
       audio.play().catch(() => {});
-    } catch {}
+    } catch (_e) {}
   };
 
   const handleBatchAnalyze = async () => {
@@ -454,7 +454,7 @@ export default function Home() {
       setBatchItems(prev => prev.map((b, i) => i === idx ? { ...b, saved: true, category: cat.id } : b));
       setShowCatPicker(null);
       loadReceipts();
-    } catch {}
+    } catch (_e) {}
   };
 
   const saveAllBatch = async () => {
