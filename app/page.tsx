@@ -3,23 +3,37 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Camera, BarChart2, FileText, BookOpen,
   ChevronLeft, ChevronRight, Download, AlertTriangle,
-  Check, Edit2, RefreshCw,
+  Check, Edit2, RefreshCw, Trash2, X, Images, Loader2,
+  CheckCircle2,
 } from 'lucide-react';
 import {
   PieChart, Pie, Cell, Tooltip, ResponsiveContainer,
   BarChart, Bar, XAxis, YAxis, CartesianGrid,
 } from 'recharts';
 
-// ── Types ────────────────────────────────────────────────────────────────────
+// ── Types ─────────────────────────────────────────────────────────────────────
 type Lang = 'ja' | 'zh';
 type ScanState = 'idle' | 'preview' | 'loading' | 'result' | 'saving' | 'done';
 type TabId = 'scan' | 'journal' | 'analysis' | 'export';
+type ScanMode = 'single' | 'batch';
 
 interface ScanResult {
   date: string; merchant: string; amount: number;
   category: string; confidence: number;
   tax_rate: number; tax_amount: number; amount_before_tax: number;
   invoice_number: string | null; debit_account: string; credit_account: string;
+}
+
+interface BatchItem extends ScanResult {
+  index: number;
+  file: File;
+  previewUrl: string;
+  status: 'pending' | 'analyzing' | 'done' | 'error';
+  editDebit: string;
+  editCredit: string;
+  category: string;
+  saved?: boolean;
+  error?: string;
 }
 
 interface Receipt {
@@ -39,10 +53,10 @@ interface ReportData {
 
 interface Anomaly { type: string; message: string; severity: 'high' | 'medium'; }
 
-// ── Constants ────────────────────────────────────────────────────────────────
-const DEBIT_ACCOUNTS = ['消耗品費','交際費','旅費交通費','会議費','広告宣伝費','通信費','水道光熱費','地代家賃','雑費'];
+// ── Constants ──────────────────────────────────────────────────────────────────
+const DEBIT_ACCOUNTS  = ['消耗品費','交際費','旅費交通費','会議費','広告宣伝費','通信費','水道光熱費','地代家賃','雑費'];
 const CREDIT_ACCOUNTS = ['現金','未払金','普通預金'];
-const PIE_COLORS = ['#6C63FF','#FF6B9D','#43C59E','#FFB347','#87CEEB','#DDA0DD'];
+const PIE_COLORS      = ['#6C63FF','#FF6B9D','#43C59E','#FFB347','#87CEEB','#DDA0DD'];
 
 const CATS = [
   { id: 'office_supplies', emoji: '🏢', color: 'blue'  },
@@ -50,13 +64,14 @@ const CATS = [
   { id: 'personal',        emoji: '🏠', color: 'green' },
 ] as const;
 
-// ── i18n ─────────────────────────────────────────────────────────────────────
+// ── i18n ───────────────────────────────────────────────────────────────────────
 const T = {
   ja: {
-    appName:'スマート会計', subtitle:'AIで仕訳・精算書を自動作成',
+    appName:'大鶴会計', subtitle:'AIで仕訳・精算書を自動作成',
     switchLang:'中文',
     scan:'スキャン', journal:'仕訳帳', analysis:'分析', export:'出力',
-    scanBtn:'レシートをスキャン', preview:'この画像を分析する', analyzing:'AI分析中…',
+    scanBtn:'レシートをスキャン', batchBtn:'まとめてスキャン',
+    preview:'この画像を分析する', analyzing:'AI分析中…',
     readComplete:'読み取り完了',
     date:'日付', merchant:'店舗名', amount:'金額（税込）',
     amountBeforeTax:'税抜金額', taxAmount:'消費税', invoiceNumber:'インボイス番号',
@@ -70,18 +85,25 @@ const T = {
     catSub:{ office_supplies:'消耗品費', entertainment:'交際費', personal:'非業務' },
     thisMonth:'今月の合計', recentHistory:'最近の取引', noHistory:'取引がありません',
     journalEntries:'仕訳一覧', noData:'データがありません',
+    deleteConfirm:'この仕訳を削除しますか？', delete:'削除', cancel:'キャンセル',
     anomalyTitle:'異常検知', noAnomalies:'異常は検出されませんでした',
     monthly:'月別推移', byCategory:'カテゴリ別', total:'合計', count:'件数', totalTax:'消費税合計',
     exportTitle:'出力・精算書', exportNote:'CSVを会計ソフトへ取り込めます',
     exportFreee:'freee形式 CSV', exportMF:'マネーフォワード形式 CSV',
     expenseReport:'経費精算書を開く（印刷用）',
     csvInfo:'• freee：仕訳帳形式（借方・貸方・税区分）\n• MF：明細形式（科目・金額）\n• 精算書：ブラウザから印刷→PDF保存可',
+    batchTitle:'まとめてスキャン', batchSelect:'写真を選ぶ（複数可）',
+    batchAnalyze:'まとめて分析する', batchSaveAll:'全て保存',
+    batchProgress:'分析中…', batchDone:'分析完了',
+    batchSaved:'保存済み',
+    selectCategory:'カテゴリを選択',
   },
   zh: {
-    appName:'智能会计', subtitle:'AI自动生成分录与报销单',
+    appName:'大鹤会计', subtitle:'AI自动生成分录与报销单',
     switchLang:'日本語',
     scan:'扫描', journal:'分录', analysis:'分析', export:'导出',
-    scanBtn:'扫描收据', preview:'分析此图片', analyzing:'AI分析中…',
+    scanBtn:'扫描收据', batchBtn:'批量扫描',
+    preview:'分析此图片', analyzing:'AI分析中…',
     readComplete:'读取完成',
     date:'日期', merchant:'商户名', amount:'金额（含税）',
     amountBeforeTax:'税前金额', taxAmount:'消费税', invoiceNumber:'发票编号',
@@ -95,19 +117,39 @@ const T = {
     catSub:{ office_supplies:'办公耗材费', entertainment:'交际费', personal:'非业务' },
     thisMonth:'本月合计', recentHistory:'近期交易', noHistory:'暂无交易',
     journalEntries:'分录列表', noData:'暂无数据',
+    deleteConfirm:'删除此分录？', delete:'删除', cancel:'取消',
     anomalyTitle:'异常检测', noAnomalies:'未检测到异常',
     monthly:'月度趋势', byCategory:'按类别', total:'合计', count:'笔数', totalTax:'消费税合计',
     exportTitle:'导出与报销单', exportNote:'下载CSV后可导入会计软件',
     exportFreee:'freee格式 CSV', exportMF:'MoneyForward格式 CSV',
     expenseReport:'生成费用报销单（打印用）',
     csvInfo:'• freee：日记账格式（借方・贷方・税区分）\n• MF：明细格式（科目・金额）\n• 报销单：浏览器打印→保存PDF',
+    batchTitle:'批量扫描', batchSelect:'选择照片（可多选）',
+    batchAnalyze:'批量分析', batchSaveAll:'全部保存',
+    batchProgress:'分析中…', batchDone:'分析完成',
+    batchSaved:'已保存',
+    selectCategory:'选择类别',
   },
 } as const;
 
-// ── Component ─────────────────────────────────────────────────────────────────
+// ── Helpers ────────────────────────────────────────────────────────────────────
+function prevMonth(m: string) {
+  const d = new Date(m + '-01'); d.setMonth(d.getMonth() - 1);
+  return d.toISOString().slice(0, 7);
+}
+function nextMonth(m: string) {
+  const d = new Date(m + '-01'); d.setMonth(d.getMonth() + 1);
+  return d.toISOString().slice(0, 7);
+}
+function currentMonth() { return new Date().toISOString().slice(0, 7); }
+
+// ── Component ──────────────────────────────────────────────────────────────────
 export default function Home() {
   const [lang, setLang]       = useState<Lang>('ja');
   const [tab, setTab]         = useState<TabId>('scan');
+  const [scanMode, setScanMode] = useState<ScanMode>('single');
+
+  // Single scan
   const [scan, setScan]       = useState<ScanState>('idle');
   const [imgFile, setImgFile] = useState<File | null>(null);
   const [imgPreview, setImgPreview] = useState<string | null>(null);
@@ -116,17 +158,28 @@ export default function Home() {
   const [editCredit, setEditCredit] = useState('現金');
   const [showEditor, setShowEditor] = useState(false);
 
-  const [receipts,   setReceipts]   = useState<Receipt[]>([]);
-  const [monthTotal, setMonthTotal] = useState(0);
-  const [report,     setReport]     = useState<ReportData | null>(null);
-  const [reportMonth, setReportMonth] = useState(() => new Date().toISOString().slice(0, 7));
-  const [exportMonth, setExportMonth] = useState(() => new Date().toISOString().slice(0, 7));
-  const [anomalies,  setAnomalies]  = useState<Anomaly[]>([]);
+  // Batch scan
+  const [batchItems,    setBatchItems]    = useState<BatchItem[]>([]);
+  const [batchAnalyzing, setBatchAnalyzing] = useState(false);
+  const [batchProgress,  setBatchProgress]  = useState(0);
+  const [batchDoneCount, setBatchDoneCount] = useState(0);
+  const [showCatPicker, setShowCatPicker] = useState<number | null>(null);
 
-  const fileRef = useRef<HTMLInputElement>(null);
+  // Data
+  const [receipts,    setReceipts]    = useState<Receipt[]>([]);
+  const [monthTotal,  setMonthTotal]  = useState(0);
+  const [journalMonth, setJournalMonth] = useState(currentMonth);
+  const [report,      setReport]      = useState<ReportData | null>(null);
+  const [reportMonth, setReportMonth] = useState(currentMonth);
+  const [exportMonth, setExportMonth] = useState(currentMonth);
+  const [anomalies,   setAnomalies]   = useState<Anomaly[]>([]);
+  const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
+
+  const fileRef      = useRef<HTMLInputElement>(null);
+  const batchFileRef = useRef<HTMLInputElement>(null);
   const t = T[lang];
 
-  // ── Data loading ────────────────────────────────────────────────────────────
+  // ── Data loading ──────────────────────────────────────────────────────────
   const loadReceipts = useCallback(async () => {
     try {
       const r = await fetch('/api/receipts'); const j = await r.json();
@@ -149,17 +202,16 @@ export default function Home() {
 
   useEffect(() => {
     loadReceipts();
-    const m = new Date().toISOString().slice(0, 7);
+    const m = currentMonth();
     loadReport(m); loadAnomalies(m);
   }, [loadReceipts, loadReport, loadAnomalies]);
 
-  const changeReportMonth = (delta: number) => {
-    const d = new Date(reportMonth + '-01'); d.setMonth(d.getMonth() + delta);
-    const m = d.toISOString().slice(0, 7);
-    setReportMonth(m); loadReport(m); loadAnomalies(m);
-  };
+  // Journal month filtered + sorted
+  const journalReceipts = receipts
+    .filter(r => r.date?.startsWith(journalMonth))
+    .sort((a, b) => a.date.localeCompare(b.date));
 
-  // ── Scan handlers ───────────────────────────────────────────────────────────
+  // ── Single scan ───────────────────────────────────────────────────────────
   const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]; if (!file) return;
     setImgFile(file);
@@ -177,7 +229,6 @@ export default function Home() {
         const fd = new FormData(); fd.append('image', imgFile);
         data = await (await fetch('/api/analyze', { method: 'POST', body: fd })).json();
       } else {
-        await new Promise(r => setTimeout(r, 1200));
         data = await (await fetch('/api/analyze', { method: 'POST' })).json();
       }
       setScanResult(data);
@@ -211,29 +262,117 @@ export default function Home() {
     setScan('idle'); setImgFile(null); setImgPreview(null); setScanResult(null);
   };
 
-  // ── Export ──────────────────────────────────────────────────────────────────
-  const downloadCSV = async (format: 'freee' | 'mf') => {
-    const res = await fetch(`/api/export?format=${format}&month=${exportMonth}`);
-    const blob = await res.blob();
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = `${format}_${exportMonth}.csv`; a.click();
+  // ── Batch scan ────────────────────────────────────────────────────────────
+  const handleBatchSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files ?? []);
+    if (files.length === 0) return;
+    const items: BatchItem[] = files.map((file, i) => ({
+      index: i, file,
+      previewUrl: URL.createObjectURL(file),
+      status: 'pending',
+      date: '', merchant: '', amount: 0, category: 'office_supplies', confidence: 0,
+      tax_rate: 10, tax_amount: 0, amount_before_tax: 0,
+      invoice_number: null, debit_account: '消耗品費', credit_account: '現金',
+      editDebit: '消耗品費', editCredit: '現金',
+    }));
+    setBatchItems(items);
+    setBatchDoneCount(0);
+    setBatchProgress(0);
+    e.target.value = '';
   };
 
-  const openExpenseReport = () => {
-    window.open(`/api/export?format=expense&month=${exportMonth}`, '_blank');
+  const handleBatchAnalyze = async () => {
+    if (batchItems.length === 0) return;
+    setBatchAnalyzing(true);
+    setBatchProgress(0);
+
+    // Mark all as analyzing
+    setBatchItems(prev => prev.map(it => ({ ...it, status: 'analyzing' as const })));
+
+    const fd = new FormData();
+    batchItems.forEach(it => fd.append('images', it.file));
+
+    try {
+      const res = await fetch('/api/batch-analyze', { method: 'POST', body: fd });
+      const { results } = await res.json();
+
+      setBatchItems(prev => prev.map((it, i) => {
+        const r = results?.[i];
+        if (!r) return { ...it, status: 'error' as const };
+        return {
+          ...it,
+          status: r.error ? 'error' as const : 'done' as const,
+          date: r.date, merchant: r.merchant, amount: r.amount,
+          confidence: r.confidence, tax_rate: r.tax_rate,
+          tax_amount: r.tax_amount, amount_before_tax: r.amount_before_tax,
+          invoice_number: r.invoice_number,
+          debit_account: r.debit_account, editDebit: r.debit_account,
+          credit_account: r.credit_account, editCredit: r.credit_account,
+          error: r.error,
+        };
+      }));
+      setBatchDoneCount(results?.length ?? 0);
+    } catch {
+      setBatchItems(prev => prev.map(it => ({ ...it, status: 'error' as const })));
+    } finally {
+      setBatchAnalyzing(false);
+      setBatchProgress(100);
+    }
   };
 
-  // ── Month nav helper ────────────────────────────────────────────────────────
-  const MonthNav = ({ value, onChange }: { value: string; onChange: (d: number) => void }) => (
+  const saveBatchItem = async (idx: number, cat: typeof CATS[number]) => {
+    const it = batchItems[idx]; if (!it || it.saved) return;
+    try {
+      await fetch('/api/receipts', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          date: it.date, merchant: it.merchant, amount: it.amount,
+          category: cat.id, category_label: t.catLabel[cat.id],
+          tax_rate: it.tax_rate, tax_amount: it.tax_amount,
+          amount_before_tax: it.amount_before_tax,
+          invoice_number: it.invoice_number,
+          debit_account: it.editDebit, credit_account: it.editCredit,
+        }),
+      });
+      setBatchItems(prev => prev.map((b, i) => i === idx ? { ...b, saved: true, category: cat.id } : b));
+      setShowCatPicker(null);
+      loadReceipts();
+    } catch {}
+  };
+
+  const saveAllBatch = async () => {
+    const unsaved = batchItems.filter(it => it.status === 'done' && !it.saved);
+    await Promise.all(unsaved.map(it =>
+      fetch('/api/receipts', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          date: it.date, merchant: it.merchant, amount: it.amount,
+          category: it.category || 'office_supplies',
+          category_label: t.catLabel[(it.category as keyof typeof t.catLabel) ?? 'office_supplies'] ?? it.category,
+          tax_rate: it.tax_rate, tax_amount: it.tax_amount,
+          amount_before_tax: it.amount_before_tax,
+          invoice_number: it.invoice_number,
+          debit_account: it.editDebit, credit_account: it.editCredit,
+        }),
+      })
+    ));
+    setBatchItems(prev => prev.map(b => b.status === 'done' ? { ...b, saved: true } : b));
+    loadReceipts();
+  };
+
+  // ── Delete ────────────────────────────────────────────────────────────────
+  const handleDelete = async (id: string) => {
+    await fetch(`/api/receipts/${id}`, { method: 'DELETE' });
+    setDeleteTarget(null);
+    loadReceipts();
+  };
+
+  // ── Month nav component ────────────────────────────────────────────────────
+  const MonthNav = ({ value, onPrev, onNext }: { value: string; onPrev: () => void; onNext: () => void }) => (
     <div className="flex items-center justify-between bg-white rounded-xl px-4 py-2.5 shadow-sm">
-      <button onClick={() => onChange(-1)} className="p-1 text-gray-400 hover:text-gray-700">
-        <ChevronLeft size={20} />
-      </button>
+      <button onClick={onPrev} className="p-1 text-gray-400 hover:text-gray-700"><ChevronLeft size={20} /></button>
       <span className="font-bold text-gray-800">{value}</span>
-      <button onClick={() => onChange(1)} className="p-1 text-gray-400 hover:text-gray-700">
-        <ChevronRight size={20} />
-      </button>
+      <button onClick={onNext} className="p-1 text-gray-400 hover:text-gray-700"><ChevronRight size={20} /></button>
     </div>
   );
 
@@ -242,45 +381,68 @@ export default function Home() {
     <div className="min-h-screen bg-gradient-to-br from-slate-100 to-indigo-50 flex justify-center">
       <div className="w-full max-w-[420px] flex flex-col min-h-screen">
 
-        {/* ── Header ──────────────────────────────────────────────────────── */}
-        <div className="bg-gradient-to-r from-indigo-600 to-violet-600 text-white px-5 pt-10 pb-5 shadow-lg">
-          <div className="flex items-start justify-between">
-            <div>
-              <h1 className="text-2xl font-bold tracking-tight">{t.appName}</h1>
-              <p className="text-indigo-200 text-xs mt-0.5">{t.subtitle}</p>
+        {/* ── Header ────────────────────────────────────────────────────── */}
+        <div className="bg-gradient-to-r from-indigo-700 to-violet-700 text-white px-5 pt-10 pb-5 shadow-lg relative overflow-hidden">
+          {/* mascot background silhouette */}
+          <div className="absolute right-0 bottom-0 opacity-10 pointer-events-none">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src="/mascot.jpeg" alt="" className="h-28 object-contain" />
+          </div>
+
+          <div className="flex items-start justify-between relative">
+            <div className="flex items-center gap-3">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src="/logo.jpeg" alt="大鶴会計" className="w-10 h-10 rounded-full object-cover bg-white/20 flex-shrink-0" />
+              <div>
+                <h1 className="text-2xl font-bold tracking-tight">{t.appName}</h1>
+                <p className="text-indigo-200 text-xs mt-0.5">{t.subtitle}</p>
+              </div>
             </div>
             <button
               onClick={() => setLang(l => l === 'ja' ? 'zh' : 'ja')}
-              className="border border-white/40 text-xs px-3 py-1.5 rounded-full hover:bg-white/20 transition-colors"
+              className="border border-white/40 text-xs px-3 py-1.5 rounded-full hover:bg-white/20 transition-colors flex-shrink-0"
             >
               {t.switchLang}
             </button>
           </div>
-          <div className="mt-4 bg-white/20 rounded-xl px-4 py-2.5 flex justify-between items-center">
+
+          <div className="mt-4 bg-white/20 rounded-xl px-4 py-2.5 flex justify-between items-center relative">
             <span className="text-sm text-indigo-100">{t.thisMonth}</span>
             <span className="text-xl font-bold">¥{monthTotal.toLocaleString('ja-JP')}</span>
           </div>
         </div>
 
-        {/* ── Content ─────────────────────────────────────────────────────── */}
+        {/* ── Content ───────────────────────────────────────────────────── */}
         <div className="flex-1 overflow-y-auto px-4 py-5 space-y-4 pb-24">
 
-          {/* ════ SCAN TAB ════════════════════════════════════════════════ */}
+          {/* ════ SCAN TAB ══════════════════════════════════════════════ */}
           {tab === 'scan' && (
             <>
               <input ref={fileRef} type="file" accept="image/*"
                 {...({ capture: 'environment' } as object)}
                 className="hidden" onChange={handleImageSelect} />
+              <input ref={batchFileRef} type="file" accept="image/*" multiple
+                className="hidden" onChange={handleBatchSelect} />
 
-              {scan === 'idle' && (
+              {scanMode === 'single' && scan === 'idle' && (
                 <>
-                  <button
-                    onClick={() => fileRef.current?.click()}
-                    className="w-full bg-gradient-to-r from-indigo-500 to-violet-500 text-white py-6 rounded-2xl flex flex-col items-center gap-2 shadow-lg active:scale-95 transition-transform"
-                  >
-                    <Camera size={36} />
-                    <span className="font-semibold text-lg">{t.scanBtn}</span>
-                  </button>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => fileRef.current?.click()}
+                      className="flex-1 bg-gradient-to-r from-indigo-500 to-violet-500 text-white py-5 rounded-2xl flex flex-col items-center gap-2 shadow-lg active:scale-95 transition-transform"
+                    >
+                      <Camera size={30} />
+                      <span className="font-semibold text-sm">{t.scanBtn}</span>
+                    </button>
+                    <button
+                      onClick={() => setScanMode('batch')}
+                      className="flex-1 bg-gradient-to-r from-emerald-500 to-teal-500 text-white py-5 rounded-2xl flex flex-col items-center gap-2 shadow-lg active:scale-95 transition-transform"
+                    >
+                      <Images size={30} />
+                      <span className="font-semibold text-sm">{t.batchBtn}</span>
+                    </button>
+                  </div>
+
                   {receipts.length > 0 && (
                     <div>
                       <h2 className="font-semibold text-gray-700 mb-2 text-sm">{t.recentHistory}</h2>
@@ -297,11 +459,146 @@ export default function Home() {
                       </div>
                     </div>
                   )}
+
+                  {receipts.length === 0 && (
+                    <div className="flex flex-col items-center py-10 gap-3 text-gray-400">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src="/mascot.jpeg" alt="" className="w-32 opacity-60 object-contain" />
+                      <p className="text-sm">{t.noHistory}</p>
+                    </div>
+                  )}
                 </>
               )}
 
-              {scan === 'preview' && imgPreview && (
+              {/* ── Batch mode UI ──────────────────────────────────────── */}
+              {scanMode === 'batch' && (
                 <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <h2 className="font-bold text-gray-800">{t.batchTitle}</h2>
+                    <button onClick={() => { setScanMode('single'); setBatchItems([]); }}
+                      className="text-gray-400 hover:text-gray-600"><X size={18} /></button>
+                  </div>
+
+                  {batchItems.length === 0 ? (
+                    <button
+                      onClick={() => batchFileRef.current?.click()}
+                      className="w-full border-2 border-dashed border-indigo-300 rounded-2xl py-10 flex flex-col items-center gap-3 text-indigo-400 hover:bg-indigo-50 transition-colors active:scale-95"
+                    >
+                      <Images size={36} />
+                      <span className="font-medium text-sm">{t.batchSelect}</span>
+                    </button>
+                  ) : (
+                    <>
+                      {/* progress summary */}
+                      <div className="bg-white rounded-xl p-3 shadow-sm flex justify-between items-center text-sm">
+                        <span className="text-gray-500">{batchItems.length}枚選択</span>
+                        <span className="text-emerald-600 font-medium">
+                          {batchItems.filter(b => b.status === 'done').length} / {batchItems.length} 完了
+                        </span>
+                      </div>
+
+                      {/* thumbnails list */}
+                      <div className="space-y-3">
+                        {batchItems.map((item, idx) => (
+                          <div key={idx} className={`bg-white rounded-2xl shadow-sm overflow-hidden border ${
+                            item.saved ? 'border-emerald-200' : 'border-gray-100'
+                          }`}>
+                            <div className="flex gap-3 p-3">
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              <img src={item.previewUrl} alt="" className="w-16 h-16 rounded-xl object-cover flex-shrink-0" />
+                              <div className="flex-1 min-w-0">
+                                {item.status === 'pending' && (
+                                  <div className="flex items-center gap-1 text-gray-400 text-sm">
+                                    <Loader2 size={13} className="animate-spin" />待機中
+                                  </div>
+                                )}
+                                {item.status === 'analyzing' && (
+                                  <div className="flex items-center gap-1 text-indigo-500 text-sm">
+                                    <Loader2 size={13} className="animate-spin" />{t.batchProgress}
+                                  </div>
+                                )}
+                                {item.status === 'error' && (
+                                  <div className="text-red-500 text-xs">読み取りエラー</div>
+                                )}
+                                {item.status === 'done' && (
+                                  <>
+                                    <div className="font-medium text-sm text-gray-800 truncate">{item.merchant}</div>
+                                    <div className="text-xs text-gray-400">{item.date}</div>
+                                    <div className="font-bold text-indigo-600 text-sm">¥{item.amount.toLocaleString('ja-JP')}</div>
+                                    <div className="text-xs text-gray-400">{item.editDebit} / {item.editCredit}</div>
+                                  </>
+                                )}
+                              </div>
+                              <div className="flex flex-col items-end gap-1">
+                                {item.saved && (
+                                  <span className="bg-emerald-100 text-emerald-600 text-xs px-2 py-0.5 rounded-full flex items-center gap-0.5">
+                                    <CheckCircle2 size={10} />{t.batchSaved}
+                                  </span>
+                                )}
+                                {item.status === 'done' && !item.saved && (
+                                  <button
+                                    onClick={() => setShowCatPicker(showCatPicker === idx ? null : idx)}
+                                    className="bg-indigo-600 text-white text-xs px-2 py-1 rounded-lg"
+                                  >保存</button>
+                                )}
+                              </div>
+                            </div>
+
+                            {/* inline category picker */}
+                            {showCatPicker === idx && !item.saved && (
+                              <div className="border-t border-gray-100 p-3 bg-gray-50">
+                                <p className="text-xs text-gray-500 mb-2">{t.selectCategory}</p>
+                                <div className="flex gap-2">
+                                  {CATS.map(cat => (
+                                    <button key={cat.id} onClick={() => saveBatchItem(idx, cat)}
+                                      className={`flex-1 py-2 rounded-xl text-xs font-medium border-2 ${
+                                        cat.color === 'blue'  ? 'border-blue-200 bg-blue-50 text-blue-700'  :
+                                        cat.color === 'pink'  ? 'border-pink-200 bg-pink-50 text-pink-700'  :
+                                                                'border-green-200 bg-green-50 text-green-700'
+                                      }`}>
+                                      {cat.emoji}<br />{t.catLabel[cat.id]}
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+
+                      {/* action buttons */}
+                      <div className="space-y-2">
+                        {!batchAnalyzing && batchItems.some(b => b.status === 'pending') && (
+                          <button onClick={handleBatchAnalyze}
+                            className="w-full bg-indigo-600 text-white py-3.5 rounded-2xl font-semibold shadow flex items-center justify-center gap-2 active:scale-95 transition-transform">
+                            <BarChart2 size={18} />{t.batchAnalyze}
+                          </button>
+                        )}
+                        {batchAnalyzing && (
+                          <div className="flex items-center justify-center gap-2 py-3 text-indigo-500">
+                            <Loader2 size={18} className="animate-spin" />{t.batchProgress}
+                          </div>
+                        )}
+                        {batchItems.some(b => b.status === 'done' && !b.saved) && !batchAnalyzing && (
+                          <button onClick={saveAllBatch}
+                            className="w-full bg-emerald-500 text-white py-3.5 rounded-2xl font-semibold shadow flex items-center justify-center gap-2 active:scale-95 transition-transform">
+                            <Check size={18} />{t.batchSaveAll}
+                          </button>
+                        )}
+                        <button onClick={() => batchFileRef.current?.click()}
+                          className="w-full border border-gray-300 text-gray-600 py-3 rounded-2xl text-sm">
+                          {t.batchSelect}
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
+
+              {/* Single scan states */}
+              {scanMode === 'single' && scan === 'preview' && imgPreview && (
+                <div className="space-y-4">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img src={imgPreview} alt="preview" className="w-full rounded-2xl object-cover max-h-72 shadow" />
                   <button onClick={handleAnalyze}
                     className="w-full bg-indigo-600 text-white py-3.5 rounded-2xl font-semibold shadow active:scale-95 transition-transform">
@@ -311,17 +608,16 @@ export default function Home() {
                 </div>
               )}
 
-              {scan === 'loading' && (
+              {scanMode === 'single' && scan === 'loading' && (
                 <div className="flex flex-col items-center py-16 gap-4">
                   <div className="w-14 h-14 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin" />
                   <p className="text-gray-500 text-sm">{t.analyzing}</p>
                 </div>
               )}
 
-              {scan === 'result' && scanResult && (
+              {scanMode === 'single' && scan === 'result' && scanResult && (
                 <div className="space-y-4">
                   <div className="bg-white rounded-2xl shadow p-4 space-y-3">
-                    {/* header badges */}
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
                         <span className="w-2 h-2 rounded-full bg-emerald-500" />
@@ -337,7 +633,6 @@ export default function Home() {
                       </div>
                     </div>
 
-                    {/* basic info */}
                     <div className="space-y-1.5 border-b border-gray-100 pb-3">
                       <div className="flex justify-between text-sm">
                         <span className="text-gray-500">{t.date}</span>
@@ -349,7 +644,6 @@ export default function Home() {
                       </div>
                     </div>
 
-                    {/* tax breakdown */}
                     <div className="space-y-1 border-b border-gray-100 pb-3">
                       <div className="flex justify-between text-sm">
                         <span className="text-gray-500">{t.amountBeforeTax}</span>
@@ -365,7 +659,6 @@ export default function Home() {
                       </div>
                     </div>
 
-                    {/* invoice number */}
                     {scanResult.invoice_number && (
                       <div className="flex justify-between text-sm border-b border-gray-100 pb-3">
                         <span className="text-gray-500">{t.invoiceNumber}</span>
@@ -373,7 +666,6 @@ export default function Home() {
                       </div>
                     )}
 
-                    {/* journal preview */}
                     <div>
                       <div className="flex items-center justify-between mb-2">
                         <span className="text-sm font-semibold text-gray-700">{t.journalPreview}</span>
@@ -413,7 +705,6 @@ export default function Home() {
                     </div>
                   </div>
 
-                  {/* category selection */}
                   <p className="text-center font-semibold text-gray-700">{t.question}</p>
                   <p className="text-center text-xs text-gray-400">{t.tapSelect}</p>
                   <div className="space-y-3">
@@ -439,19 +730,21 @@ export default function Home() {
                 </div>
               )}
 
-              {scan === 'saving' && (
+              {scanMode === 'single' && scan === 'saving' && (
                 <div className="flex flex-col items-center py-16 gap-3">
                   <div className="w-12 h-12 border-4 border-indigo-400 border-t-transparent rounded-full animate-spin" />
                   <p className="text-gray-400 text-sm">{t.saving}</p>
                 </div>
               )}
 
-              {scan === 'done' && (
-                <div className="flex flex-col items-center py-16 gap-5">
+              {scanMode === 'single' && scan === 'done' && (
+                <div className="flex flex-col items-center py-12 gap-5">
                   <div className="w-16 h-16 bg-emerald-100 rounded-full flex items-center justify-center">
                     <Check size={32} className="text-emerald-600" />
                   </div>
                   <p className="font-semibold text-gray-700">{t.saved}</p>
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src="/mascot.jpeg" alt="" className="w-28 object-contain opacity-80" />
                   <button onClick={resetScan}
                     className="bg-indigo-600 text-white px-8 py-3 rounded-2xl font-medium shadow active:scale-95 transition-transform">
                     {t.scanAnother}
@@ -461,7 +754,7 @@ export default function Home() {
             </>
           )}
 
-          {/* ════ JOURNAL TAB ════════════════════════════════════════════ */}
+          {/* ════ JOURNAL TAB ═══════════════════════════════════════════ */}
           {tab === 'journal' && (
             <div className="space-y-4">
               <div className="flex items-center justify-between">
@@ -471,22 +764,38 @@ export default function Home() {
                 </button>
               </div>
 
-              {receipts.length === 0 ? (
-                <div className="text-center py-16 text-gray-400 text-sm">{t.noData}</div>
-              ) : receipts.map(r => (
+              <MonthNav
+                value={journalMonth}
+                onPrev={() => setJournalMonth(prevMonth(journalMonth))}
+                onNext={() => setJournalMonth(nextMonth(journalMonth))}
+              />
+
+              {journalReceipts.length === 0 ? (
+                <div className="flex flex-col items-center py-12 gap-3 text-gray-400">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src="/mascot.jpeg" alt="" className="w-24 opacity-40 object-contain" />
+                  <p className="text-sm">{t.noData}</p>
+                </div>
+              ) : journalReceipts.map(r => (
                 <div key={r.id} className="bg-white rounded-2xl shadow-sm p-4 border border-gray-100">
                   <div className="flex justify-between items-start mb-2">
                     <div>
                       <div className="font-medium text-gray-800 text-sm">{r.merchant}</div>
                       <div className="text-xs text-gray-400 mt-0.5">{r.date}</div>
                     </div>
-                    <div className="flex flex-col items-end gap-1">
-                      {r.invoice_number && (
-                        <span className="bg-blue-100 text-blue-600 text-xs px-1.5 py-0.5 rounded">{t.invoiceDetected}</span>
-                      )}
-                      <span className={`text-xs px-1.5 py-0.5 rounded ${
-                        (r.tax_rate ?? 10) === 8 ? 'bg-orange-100 text-orange-600' : 'bg-gray-100 text-gray-500'
-                      }`}>{(r.tax_rate ?? 10) === 8 ? t.tax8 : t.tax10}</span>
+                    <div className="flex items-center gap-2">
+                      <div className="flex flex-col items-end gap-1">
+                        {r.invoice_number && (
+                          <span className="bg-blue-100 text-blue-600 text-xs px-1.5 py-0.5 rounded">{t.invoiceDetected}</span>
+                        )}
+                        <span className={`text-xs px-1.5 py-0.5 rounded ${
+                          (r.tax_rate ?? 10) === 8 ? 'bg-orange-100 text-orange-600' : 'bg-gray-100 text-gray-500'
+                        }`}>{(r.tax_rate ?? 10) === 8 ? t.tax8 : t.tax10}</span>
+                      </div>
+                      <button onClick={() => setDeleteTarget(r.id)}
+                        className="text-gray-300 hover:text-red-400 transition-colors p-1">
+                        <Trash2 size={15} />
+                      </button>
                     </div>
                   </div>
 
@@ -511,10 +820,20 @@ export default function Home() {
             </div>
           )}
 
-          {/* ════ ANALYSIS TAB ═══════════════════════════════════════════ */}
+          {/* ════ ANALYSIS TAB ══════════════════════════════════════════ */}
           {tab === 'analysis' && (
             <div className="space-y-4">
-              <MonthNav value={reportMonth} onChange={changeReportMonth} />
+              <MonthNav
+                value={reportMonth}
+                onPrev={() => {
+                  const m = prevMonth(reportMonth); setReportMonth(m);
+                  loadReport(m); loadAnomalies(m);
+                }}
+                onNext={() => {
+                  const m = nextMonth(reportMonth); setReportMonth(m);
+                  loadReport(m); loadAnomalies(m);
+                }}
+              />
 
               {anomalies.length > 0 ? (
                 <div className="space-y-2">
@@ -583,7 +902,7 @@ export default function Home() {
             </div>
           )}
 
-          {/* ════ EXPORT TAB ═════════════════════════════════════════════ */}
+          {/* ════ EXPORT TAB ════════════════════════════════════════════ */}
           {tab === 'export' && (
             <div className="space-y-4">
               <div>
@@ -593,22 +912,28 @@ export default function Home() {
 
               <MonthNav
                 value={exportMonth}
-                onChange={d => {
-                  const nd = new Date(exportMonth + '-01'); nd.setMonth(nd.getMonth() + d);
-                  setExportMonth(nd.toISOString().slice(0, 7));
-                }}
+                onPrev={() => setExportMonth(prevMonth(exportMonth))}
+                onNext={() => setExportMonth(nextMonth(exportMonth))}
               />
 
               <div className="space-y-3">
-                <button onClick={() => downloadCSV('freee')}
+                <button onClick={async () => {
+                  const blob = await (await fetch(`/api/export?format=freee&month=${exportMonth}`)).blob();
+                  const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+                  a.download = `freee_${exportMonth}.csv`; a.click();
+                }}
                   className="w-full bg-emerald-500 hover:bg-emerald-600 text-white py-3.5 px-4 rounded-2xl flex items-center gap-3 font-medium shadow active:scale-95 transition-transform">
                   <Download size={18} />{t.exportFreee}
                 </button>
-                <button onClick={() => downloadCSV('mf')}
+                <button onClick={async () => {
+                  const blob = await (await fetch(`/api/export?format=mf&month=${exportMonth}`)).blob();
+                  const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+                  a.download = `mf_${exportMonth}.csv`; a.click();
+                }}
                   className="w-full bg-sky-500 hover:bg-sky-600 text-white py-3.5 px-4 rounded-2xl flex items-center gap-3 font-medium shadow active:scale-95 transition-transform">
                   <Download size={18} />{t.exportMF}
                 </button>
-                <button onClick={openExpenseReport}
+                <button onClick={() => window.open(`/api/export?format=expense&month=${exportMonth}`, '_blank')}
                   className="w-full bg-indigo-600 hover:bg-indigo-700 text-white py-3.5 px-4 rounded-2xl flex items-center gap-3 font-medium shadow active:scale-95 transition-transform">
                   <FileText size={18} />{t.expenseReport}
                 </button>
@@ -621,24 +946,44 @@ export default function Home() {
           )}
         </div>
 
-        {/* ── Bottom Nav ──────────────────────────────────────────────────── */}
+        {/* ── Delete confirm modal ────────────────────────────────────── */}
+        {deleteTarget && (
+          <div className="fixed inset-0 bg-black/50 flex items-end justify-center z-50"
+            onClick={() => setDeleteTarget(null)}>
+            <div className="bg-white w-full max-w-[420px] rounded-t-3xl p-6 pb-10"
+              onClick={e => e.stopPropagation()}>
+              <h3 className="font-bold text-gray-800 text-center mb-1">{t.deleteConfirm}</h3>
+              <p className="text-xs text-gray-400 text-center mb-5">この操作は取り消せません</p>
+              <div className="flex gap-3">
+                <button onClick={() => setDeleteTarget(null)}
+                  className="flex-1 border border-gray-300 text-gray-600 py-3 rounded-2xl font-medium">
+                  {t.cancel}
+                </button>
+                <button onClick={() => handleDelete(deleteTarget)}
+                  className="flex-1 bg-red-500 text-white py-3 rounded-2xl font-medium">
+                  {t.delete}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── Bottom Nav ──────────────────────────────────────────────── */}
         <nav className="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-[420px] bg-white border-t border-gray-200 flex shadow-lg">
-          <button onClick={() => setTab('scan')}
-            className={`flex-1 flex flex-col items-center py-2.5 gap-0.5 text-xs transition-colors ${tab === 'scan' ? 'text-indigo-600' : 'text-gray-400'}`}>
-            <Camera size={22} />{t.scan}
-          </button>
-          <button onClick={() => setTab('journal')}
-            className={`flex-1 flex flex-col items-center py-2.5 gap-0.5 text-xs transition-colors ${tab === 'journal' ? 'text-indigo-600' : 'text-gray-400'}`}>
-            <BookOpen size={22} />{t.journal}
-          </button>
-          <button onClick={() => setTab('analysis')}
-            className={`flex-1 flex flex-col items-center py-2.5 gap-0.5 text-xs transition-colors ${tab === 'analysis' ? 'text-indigo-600' : 'text-gray-400'}`}>
-            <BarChart2 size={22} />{t.analysis}
-          </button>
-          <button onClick={() => setTab('export')}
-            className={`flex-1 flex flex-col items-center py-2.5 gap-0.5 text-xs transition-colors ${tab === 'export' ? 'text-indigo-600' : 'text-gray-400'}`}>
-            <FileText size={22} />{t.export}
-          </button>
+          {([
+            { id: 'scan',     icon: Camera,   label: t.scan     },
+            { id: 'journal',  icon: BookOpen,  label: t.journal  },
+            { id: 'analysis', icon: BarChart2, label: t.analysis },
+            { id: 'export',   icon: FileText,  label: t.export   },
+          ] as { id: TabId; icon: React.ElementType; label: string }[]).map(({ id, icon: Icon, label }) => (
+            <button key={id}
+              onClick={() => { setTab(id); if (id !== 'scan') setScanMode('single'); }}
+              className={`flex-1 flex flex-col items-center py-2.5 gap-0.5 text-xs transition-colors ${
+                tab === id ? 'text-indigo-600' : 'text-gray-400'
+              }`}>
+              <Icon size={22} />{label}
+            </button>
+          ))}
         </nav>
       </div>
     </div>
