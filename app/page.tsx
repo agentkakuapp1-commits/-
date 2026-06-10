@@ -318,43 +318,47 @@ export default function Home() {
   };
 
   const handleBatchAnalyze = async () => {
-    if (batchItems.length === 0) return;
+    const pending = batchItems.filter(b => b.status === 'pending');
+    if (pending.length === 0) return;
     setBatchAnalyzing(true);
-    setBatchProgress(0);
 
-    // Mark all as analyzing
-    setBatchItems(prev => prev.map(it => ({ ...it, status: 'analyzing' as const })));
+    // Process one by one using /api/analyze (avoids Vercel 10s timeout)
+    for (let i = 0; i < batchItems.length; i++) {
+      const item = batchItems[i];
+      if (item.status !== 'pending') continue;
 
-    const fd = new FormData();
-    batchItems.forEach(it => fd.append('images', it.file));
+      // Mark this item as analyzing
+      setBatchItems(prev => prev.map((b, idx) =>
+        idx === i ? { ...b, status: 'analyzing' as const } : b
+      ));
 
-    try {
-      const res = await fetch('/api/batch-analyze', { method: 'POST', body: fd });
-      const { results } = await res.json();
+      try {
+        const fd = new FormData();
+        fd.append('image', item.file);
+        const res = await fetch('/api/analyze', { method: 'POST', body: fd });
+        const r = await res.json();
 
-      setBatchItems(prev => prev.map((it, i) => {
-        const r = results?.[i];
-        if (!r) return { ...it, status: 'error' as const };
-        return {
-          ...it,
-          status: r.error ? 'error' as const : 'done' as const,
-          date: r.date, merchant: r.merchant, amount: r.amount,
-          confidence: r.confidence, tax_rate: r.tax_rate,
-          tax_amount: r.tax_amount, amount_before_tax: r.amount_before_tax,
-          invoice_number: r.invoice_number,
-          debit_account: r.debit_account, editDebit: r.debit_account,
-          credit_account: r.credit_account, editCredit: r.credit_account,
-          error: r.error,
-        };
-      }));
-      setBatchDoneCount(results?.length ?? 0);
-      playComplete();
-    } catch {
-      setBatchItems(prev => prev.map(it => ({ ...it, status: 'error' as const })));
-    } finally {
-      setBatchAnalyzing(false);
-      setBatchProgress(100);
+        setBatchItems(prev => prev.map((b, idx) =>
+          idx === i ? {
+            ...b,
+            status: 'done' as const,
+            date: r.date, merchant: r.merchant, amount: r.amount,
+            confidence: r.confidence, tax_rate: r.tax_rate,
+            tax_amount: r.tax_amount, amount_before_tax: r.amount_before_tax,
+            invoice_number: r.invoice_number,
+            debit_account: r.debit_account, editDebit: r.debit_account,
+            credit_account: r.credit_account, editCredit: r.credit_account,
+          } : b
+        ));
+      } catch {
+        setBatchItems(prev => prev.map((b, idx) =>
+          idx === i ? { ...b, status: 'error' as const } : b
+        ));
+      }
     }
+
+    setBatchAnalyzing(false);
+    playComplete();
   };
 
   const saveBatchItem = async (idx: number, cat: typeof CATS[number]) => {
@@ -630,7 +634,8 @@ export default function Home() {
                         )}
                         {batchAnalyzing && (
                           <div className="flex items-center justify-center gap-2 py-3 text-indigo-500">
-                            <Loader2 size={18} className="animate-spin" />{t.batchProgress}
+                            <Loader2 size={18} className="animate-spin" />
+                            {t.batchProgress}（{batchItems.filter(b => b.status === 'done' || b.status === 'error').length} / {batchItems.length}）
                           </div>
                         )}
                         {batchItems.some(b => b.status === 'done' && !b.saved) && !batchAnalyzing && (
