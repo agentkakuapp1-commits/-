@@ -292,18 +292,20 @@ export default function Home() {
   const handleBatchSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files ?? []);
     if (files.length === 0) return;
-    const items: BatchItem[] = files.map((file, i) => ({
-      index: i, file,
-      previewUrl: URL.createObjectURL(file),
-      status: 'pending',
-      date: '', merchant: '', amount: 0, category: 'office_supplies', confidence: 0,
-      tax_rate: 10, tax_amount: 0, amount_before_tax: 0,
-      invoice_number: null, debit_account: '消耗品費', credit_account: '現金',
-      editDebit: '消耗品費', editCredit: '現金',
-    }));
-    setBatchItems(items);
-    setBatchDoneCount(0);
-    setBatchProgress(0);
+    // APPEND to existing items instead of replacing
+    setBatchItems(prev => {
+      const offset = prev.length;
+      const newItems: BatchItem[] = files.map((file, i) => ({
+        index: offset + i, file,
+        previewUrl: URL.createObjectURL(file),
+        status: 'pending',
+        date: '', merchant: '', amount: 0, category: 'office_supplies', confidence: 0,
+        tax_rate: 10, tax_amount: 0, amount_before_tax: 0,
+        invoice_number: null, debit_account: '消耗品費', credit_account: '現金',
+        editDebit: '消耗品費', editCredit: '現金',
+      }));
+      return [...prev, ...newItems];
+    });
     e.target.value = '';
   };
 
@@ -482,11 +484,17 @@ export default function Home() {
                       <div className="space-y-2">
                         {receipts.slice(0, 5).map(r => (
                           <div key={r.id} className="bg-white rounded-xl p-3 flex justify-between items-center shadow-sm">
-                            <div>
-                              <div className="font-medium text-sm text-gray-800">{r.merchant}</div>
+                            <div className="flex-1 min-w-0">
+                              <div className="font-medium text-sm text-gray-800 truncate">{r.merchant}</div>
                               <div className="text-xs text-gray-400">{r.date} · {r.debit_account ?? r.category_label}</div>
                             </div>
-                            <span className="font-bold text-indigo-600 text-sm">¥{r.amount.toLocaleString('ja-JP')}</span>
+                            <div className="flex items-center gap-2 flex-shrink-0">
+                              <span className="font-bold text-indigo-600 text-sm">¥{r.amount.toLocaleString('ja-JP')}</span>
+                              <button onClick={() => setDeleteTarget(r.id)}
+                                className="text-gray-300 hover:text-red-400 transition-colors p-1">
+                                <Trash2 size={14} />
+                              </button>
+                            </div>
                           </div>
                         ))}
                       </div>
@@ -573,6 +581,13 @@ export default function Home() {
                                     className="bg-indigo-600 text-white text-xs px-2 py-1 rounded-lg"
                                   >保存</button>
                                 )}
+                                {item.status === 'pending' && (
+                                  <button
+                                    onClick={() => setBatchItems(prev => prev.filter((_, i) => i !== idx))}
+                                    className="text-gray-300 hover:text-red-400 p-1">
+                                    <Trash2 size={14} />
+                                  </button>
+                                )}
                               </div>
                             </div>
 
@@ -600,10 +615,17 @@ export default function Home() {
 
                       {/* action buttons */}
                       <div className="space-y-2">
+                        {/* 写真を追加ボタン（分析前なら常に表示） */}
+                        {!batchAnalyzing && (
+                          <button onClick={() => batchFileRef.current?.click()}
+                            className="w-full border-2 border-dashed border-indigo-300 text-indigo-600 py-3 rounded-2xl text-sm font-medium flex items-center justify-center gap-2 hover:bg-indigo-50 active:scale-95 transition-transform">
+                            <Camera size={16} />写真を追加する
+                          </button>
+                        )}
                         {!batchAnalyzing && batchItems.some(b => b.status === 'pending') && (
                           <button onClick={handleBatchAnalyze}
                             className="w-full bg-indigo-600 text-white py-3.5 rounded-2xl font-semibold shadow flex items-center justify-center gap-2 active:scale-95 transition-transform">
-                            <BarChart2 size={18} />{t.batchAnalyze}
+                            <BarChart2 size={18} />{t.batchAnalyze}（{batchItems.filter(b => b.status === 'pending').length}枚）
                           </button>
                         )}
                         {batchAnalyzing && (
@@ -617,10 +639,6 @@ export default function Home() {
                             <Check size={18} />{t.batchSaveAll}
                           </button>
                         )}
-                        <button onClick={() => batchFileRef.current?.click()}
-                          className="w-full border border-gray-300 text-gray-600 py-3 rounded-2xl text-sm">
-                          {t.batchSelect}
-                        </button>
                       </div>
                     </>
                   )}
