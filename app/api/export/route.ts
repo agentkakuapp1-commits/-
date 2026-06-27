@@ -52,23 +52,31 @@ export async function GET(req: NextRequest) {
       ? { title:'购买明细表', period:'对象期间', created:'制表日', count:'笔数', date:'日期', col2:'商户 / 品目', qty:'数量', unit:'单价', amount:'金额', total:'合计' }
       : { title:'購入明細表', period:'対象期間', created:'作成日', count:'件数', date:'日付', col2:'取引先 / 品目', qty:'個数', unit:'単価', amount:'金額', total:'合計' };
     const esc = (s: unknown) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    // 言語に応じて日中いずれかを選択（旧データは fallback）
+    const pick = (ja: unknown, zh: unknown) => {
+      const j = String(ja ?? ''), z = String(zh ?? '');
+      return lang === 'zh' ? (z || j) : (j || z);
+    };
     const total = rows.reduce((s, r) => s + r.amount, 0);
 
     const blocks = rows.map(r => {
-      const lis: { name: string; qty: number; unit_price: number }[] = Array.isArray(r.line_items) ? r.line_items : [];
+      const lis: { name?: string; name_ja?: string; name_zh?: string; qty: number; unit_price: number }[] =
+        Array.isArray(r.line_items) ? r.line_items : [];
       const liRows = lis.map(li => {
         const q = Number(li.qty) || 0, u = Number(li.unit_price) || 0;
+        const name = pick(li.name_ja ?? li.name, li.name_zh ?? li.name);
         return `<tr class="li">
           <td></td>
-          <td class="liname">${esc(li.name)}</td>
+          <td class="liname">${esc(name)}</td>
           <td class="ctr">×${q}</td>
           <td class="num">¥${u.toLocaleString('ja-JP')}</td>
           <td class="num">¥${(q * u).toLocaleString('ja-JP')}</td>
         </tr>`;
       }).join('');
+      const itemTag = pick(r.item_ja ?? r.item, r.item_zh);
       return `<tr class="head">
         <td>${esc(r.date)}</td>
-        <td colspan="3"><strong>${esc(r.merchant)}</strong>${r.item ? ` <span class="tag">${esc(r.item)}</span>` : ''}</td>
+        <td colspan="3"><strong>${esc(r.merchant)}</strong>${itemTag ? ` <span class="tag">${esc(itemTag)}</span>` : ''}</td>
         <td class="num bold">¥${r.amount.toLocaleString('ja-JP')}</td>
       </tr>${liRows}`;
     }).join('');

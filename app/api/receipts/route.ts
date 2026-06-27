@@ -26,7 +26,9 @@ export async function POST(req: NextRequest) {
   const { data, error } = await supabase.from('receipts').insert([{
     date:              body.date,
     merchant:          body.merchant,
-    item:              body.item              ?? null,
+    item:              body.item_ja           ?? body.item ?? null,
+    item_ja:           body.item_ja           ?? body.item ?? null,
+    item_zh:           body.item_zh           ?? null,
     line_items:        body.line_items        ?? [],
     amount:            body.amount,
     category:          body.category,

@@ -18,10 +18,10 @@ type ScanState = 'idle' | 'preview' | 'loading' | 'result' | 'saving' | 'done';
 type TabId = 'scan' | 'journal' | 'analysis' | 'export';
 type ScanMode = 'single' | 'batch';
 
-interface LineItem { name: string; qty: number; unit_price: number; }
+interface LineItem { name_ja: string; name_zh: string; qty: number; unit_price: number; name?: string /* legacy */; }
 
 interface ScanResult {
-  date: string; merchant: string; item: string; line_items: LineItem[]; amount: number;
+  date: string; merchant: string; item_ja: string; item_zh: string; line_items: LineItem[]; amount: number;
   category: string; confidence: number;
   tax_rate: number; tax_amount: number; amount_before_tax: number;
   invoice_number: string | null; debit_account: string; credit_account: string;
@@ -40,7 +40,8 @@ interface BatchItem extends ScanResult {
 }
 
 interface Receipt {
-  id: string; date: string; merchant: string; item?: string; line_items?: LineItem[]; amount: number;
+  id: string; date: string; merchant: string;
+  item?: string /* legacy */; item_ja?: string; item_zh?: string; line_items?: LineItem[]; amount: number;
   category: string; category_label: string;
   tax_rate?: number; tax_amount?: number; amount_before_tax?: number;
   invoice_number?: string | null; debit_account?: string; credit_account?: string;
@@ -109,6 +110,7 @@ const T = {
     readComplete:'読み取り完了',
     date:'日付', merchant:'店舗名', item:'品目', itemPlaceholder:'例：コピー用紙・文具',
     lineItems:'明細', qty:'個数', unitPrice:'単価', subtotal:'小計', addLine:'明細を追加', itemName:'品目名',
+    nameJa:'品目名（日本語）', nameZh:'品目名（中文）', itemJa:'品目（日本語）', itemZh:'品目（中文）',
     amount:'金額（税込）',
     amountBeforeTax:'税抜金額', taxAmount:'消費税', invoiceNumber:'インボイス番号',
     invoiceDetected:'T番号確認済',
@@ -172,6 +174,7 @@ const T = {
     readComplete:'读取完成',
     date:'日期', merchant:'商户名', item:'品目', itemPlaceholder:'例：复印纸・文具',
     lineItems:'明细', qty:'数量', unitPrice:'单价', subtotal:'小计', addLine:'添加明细', itemName:'品名',
+    nameJa:'品名（日语）', nameZh:'品名（中文）', itemJa:'品目（日语）', itemZh:'品目（中文）',
     amount:'金额（含税）',
     amountBeforeTax:'税前金额', taxAmount:'消费税', invoiceNumber:'发票编号',
     invoiceDetected:'T号已确认',
@@ -354,9 +357,16 @@ interface AiDict {
 
 const yen = (n: number) => `¥${n.toLocaleString('ja-JP')}`;
 
+// 言語に応じて品目名／品目要約を選ぶ（旧データは fallback）
+const liName = (li: LineItem, lang: Lang) =>
+  (lang === 'zh' ? li.name_zh : li.name_ja) || li.name_ja || li.name_zh || li.name || '';
+const itemText = (r: { item_ja?: string; item_zh?: string; item?: string }, lang: Lang) =>
+  (lang === 'zh' ? r.item_zh : r.item_ja) || r.item_ja || r.item_zh || r.item || '';
+
 // ── 明細（品目ごとの個数・単価）表示 ────────────────────────────────────────
-function LineItemsView({ items, labels }: {
+function LineItemsView({ items, lang, labels }: {
   items: LineItem[];
+  lang: Lang;
   labels: { lineItems: string; subtotal: string };
 }) {
   if (!items || items.length === 0) return null;
@@ -369,7 +379,7 @@ function LineItemsView({ items, labels }: {
       <div className="divide-y divide-gray-50">
         {items.map((li, i) => (
           <div key={i} className="flex items-center justify-between px-3 py-1.5 text-xs">
-            <span className="text-gray-700 flex-1 truncate">{li.name}</span>
+            <span className="text-gray-700 flex-1 truncate">{liName(li, lang)}</span>
             <span className="text-gray-400 mx-2 whitespace-nowrap">×{li.qty} @{yen(li.unit_price)}</span>
             <span className="font-medium text-gray-800 whitespace-nowrap">{yen(li.qty * li.unit_price)}</span>
           </div>
@@ -383,36 +393,41 @@ function LineItemsView({ items, labels }: {
   );
 }
 
-// ── 明細の手動編集（行の追加・削除・編集） ──────────────────────────────────
+// ── 明細の手動編集（行の追加・削除・編集／日中の品目名） ─────────────────────
 function LineItemsEditor({ items, onChange, labels }: {
   items: LineItem[];
   onChange: (items: LineItem[]) => void;
-  labels: { lineItems: string; qty: string; unitPrice: string; addLine: string; itemName: string };
+  labels: { lineItems: string; qty: string; unitPrice: string; addLine: string; nameJa: string; nameZh: string };
 }) {
   const upd = (i: number, patch: Partial<LineItem>) =>
     onChange(items.map((li, idx) => (idx === i ? { ...li, ...patch } : li)));
   const remove = (i: number) => onChange(items.filter((_, idx) => idx !== i));
-  const add = () => onChange([...items, { name: '', qty: 1, unit_price: 0 }]);
+  const add = () => onChange([...items, { name_ja: '', name_zh: '', qty: 1, unit_price: 0 }]);
   return (
-    <div className="space-y-1.5">
-      <div className="flex items-center justify-between">
-        <label className="text-[11px] text-gray-500">{labels.lineItems}</label>
-        <span className="text-[10px] text-gray-400">{labels.qty} / {labels.unitPrice}</span>
-      </div>
+    <div className="space-y-2">
+      <label className="text-[11px] text-gray-500">{labels.lineItems}</label>
       {items.map((li, i) => (
-        <div key={i} className="flex items-center gap-1.5">
-          <input value={li.name} onChange={e => upd(i, { name: e.target.value })} placeholder={labels.itemName}
-            className="flex-1 min-w-0 border border-gray-300 rounded-lg px-2 py-1 text-xs focus:outline-none focus:border-indigo-400" />
-          <input type="number" min={1} value={li.qty}
-            onChange={e => upd(i, { qty: Math.max(1, Math.round(Number(e.target.value) || 1)) })}
-            className="w-12 border border-gray-300 rounded-lg px-1.5 py-1 text-xs text-center focus:outline-none focus:border-indigo-400" />
-          <input type="number" min={0} value={li.unit_price}
-            onChange={e => upd(i, { unit_price: Math.max(0, Math.round(Number(e.target.value) || 0)) })}
-            className="w-20 border border-gray-300 rounded-lg px-1.5 py-1 text-xs text-right focus:outline-none focus:border-indigo-400" />
-          <button onClick={() => remove(i)} className="text-gray-300 hover:text-red-400 p-0.5"><X size={13} /></button>
+        <div key={i} className="rounded-lg border border-gray-200 bg-white p-2 space-y-1.5">
+          <div className="flex items-center gap-1.5">
+            <input value={li.name_ja} onChange={e => upd(i, { name_ja: e.target.value })} placeholder={labels.nameJa}
+              className="flex-1 min-w-0 border border-gray-300 rounded-lg px-2 py-1 text-xs focus:outline-none focus:border-indigo-400" />
+            <button onClick={() => remove(i)} className="text-gray-300 hover:text-red-400 p-0.5 flex-shrink-0"><X size={13} /></button>
+          </div>
+          <input value={li.name_zh} onChange={e => upd(i, { name_zh: e.target.value })} placeholder={labels.nameZh}
+            className="w-full border border-gray-300 rounded-lg px-2 py-1 text-xs focus:outline-none focus:border-indigo-400" />
+          <div className="flex items-center gap-1.5">
+            <span className="text-[10px] text-gray-400 w-8">{labels.qty}</span>
+            <input type="number" min={1} value={li.qty}
+              onChange={e => upd(i, { qty: Math.max(1, Math.round(Number(e.target.value) || 1)) })}
+              className="w-14 border border-gray-300 rounded-lg px-1.5 py-1 text-xs text-center focus:outline-none focus:border-indigo-400" />
+            <span className="text-[10px] text-gray-400 w-8 text-right">{labels.unitPrice}</span>
+            <input type="number" min={0} value={li.unit_price}
+              onChange={e => upd(i, { unit_price: Math.max(0, Math.round(Number(e.target.value) || 0)) })}
+              className="flex-1 border border-gray-300 rounded-lg px-1.5 py-1 text-xs text-right focus:outline-none focus:border-indigo-400" />
+          </div>
         </div>
       ))}
-      <button onClick={add} className="inline-flex items-center gap-1 text-[11px] text-indigo-600 mt-1">
+      <button onClick={add} className="inline-flex items-center gap-1 text-[11px] text-indigo-600">
         <Plus size={12} />{labels.addLine}
       </button>
     </div>
@@ -583,9 +598,10 @@ export default function Home() {
   const aiTimers = useRef<Record<string, ReturnType<typeof setTimeout>[]>>({});
 
   // ── Manual account-edit state (確定後に勘定科目を変更) ──────────────────────
-  const [editingId,       setEditingId]       = useState<string | null>(null);
-  const [editDraftItem,   setEditDraftItem]   = useState('');
-  const [editDraftLines,  setEditDraftLines]  = useState<LineItem[]>([]);
+  const [editingId,        setEditingId]        = useState<string | null>(null);
+  const [editDraftItemJa,  setEditDraftItemJa]  = useState('');
+  const [editDraftItemZh,  setEditDraftItemZh]  = useState('');
+  const [editDraftLines,   setEditDraftLines]   = useState<LineItem[]>([]);
   const [editDraftDebit,  setEditDraftDebit]  = useState('');
   const [editDraftCredit, setEditDraftCredit] = useState('');
   const [savingEdit,      setSavingEdit]      = useState(false);
@@ -700,7 +716,8 @@ export default function Home() {
       await fetch('/api/receipts', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          date: scanResult.date, merchant: scanResult.merchant, item: scanResult.item,
+          date: scanResult.date, merchant: scanResult.merchant,
+          item_ja: scanResult.item_ja, item_zh: scanResult.item_zh,
           line_items: scanResult.line_items, amount: scanResult.amount,
           category: cat.id, category_label: t.catLabel[cat.id],
           tax_rate: scanResult.tax_rate, tax_amount: scanResult.tax_amount,
@@ -728,7 +745,7 @@ export default function Home() {
         index: offset + i, file,
         previewUrl: URL.createObjectURL(file),
         status: 'pending',
-        date: '', merchant: '', item: '', line_items: [], amount: 0, category: 'office_supplies', confidence: 0,
+        date: '', merchant: '', item_ja: '', item_zh: '', line_items: [], amount: 0, category: 'office_supplies', confidence: 0,
         tax_rate: 10, tax_amount: 0, amount_before_tax: 0,
         invoice_number: null, debit_account: '消耗品費', credit_account: '現金',
         editDebit: '消耗品費', editCredit: '現金',
@@ -771,7 +788,7 @@ export default function Home() {
           idx === i ? {
             ...b,
             status: 'done' as const,
-            date: r.date, merchant: r.merchant, item: r.item ?? '', line_items: r.line_items ?? [], amount: r.amount,
+            date: r.date, merchant: r.merchant, item_ja: r.item_ja ?? '', item_zh: r.item_zh ?? '', line_items: r.line_items ?? [], amount: r.amount,
             confidence: r.confidence, tax_rate: r.tax_rate,
             tax_amount: r.tax_amount, amount_before_tax: r.amount_before_tax,
             invoice_number: r.invoice_number,
@@ -796,7 +813,7 @@ export default function Home() {
       await fetch('/api/receipts', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          date: it.date, merchant: it.merchant, item: it.item, line_items: it.line_items, amount: it.amount,
+          date: it.date, merchant: it.merchant, item_ja: it.item_ja, item_zh: it.item_zh, line_items: it.line_items, amount: it.amount,
           category: cat.id, category_label: t.catLabel[cat.id],
           tax_rate: it.tax_rate, tax_amount: it.tax_amount,
           amount_before_tax: it.amount_before_tax,
@@ -816,7 +833,7 @@ export default function Home() {
       fetch('/api/receipts', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          date: it.date, merchant: it.merchant, item: it.item, line_items: it.line_items, amount: it.amount,
+          date: it.date, merchant: it.merchant, item_ja: it.item_ja, item_zh: it.item_zh, line_items: it.line_items, amount: it.amount,
           category: it.category || 'office_supplies',
           category_label: t.catLabel[(it.category as keyof typeof t.catLabel) ?? 'office_supplies'] ?? it.category,
           tax_rate: it.tax_rate, tax_amount: it.tax_amount,
@@ -839,7 +856,7 @@ export default function Home() {
 
   // ── Persist account change (manual edit & AI approve で共用) ────────────────
   const patchReceipt = useCallback(
-    async (id: string, fields: Partial<Pick<Receipt, 'item' | 'line_items' | 'debit_account' | 'credit_account' | 'category' | 'category_label'>>) => {
+    async (id: string, fields: Partial<Pick<Receipt, 'item_ja' | 'item_zh' | 'line_items' | 'debit_account' | 'credit_account' | 'category' | 'category_label'>>) => {
       // 楽観的更新
       setReceipts(prev => prev.map(r => (r.id === id ? { ...r, ...fields } : r)));
       try {
@@ -917,17 +934,25 @@ export default function Home() {
   const startManualEdit = (r: Receipt) => {
     closeAi(r.id);
     setEditingId(r.id);
-    setEditDraftItem(r.item ?? '');
-    setEditDraftLines((r.line_items ?? []).map(li => ({ ...li })));
+    setEditDraftItemJa(r.item_ja ?? r.item ?? '');
+    setEditDraftItemZh(r.item_zh ?? '');
+    setEditDraftLines((r.line_items ?? []).map(li => ({
+      name_ja: li.name_ja ?? li.name ?? '',
+      name_zh: li.name_zh ?? li.name ?? '',
+      qty: li.qty, unit_price: li.unit_price,
+    })));
     setEditDraftDebit(r.debit_account ?? '消耗品費');
     setEditDraftCredit(r.credit_account ?? '現金');
   };
   const saveManualEdit = async (id: string) => {
     setSavingEdit(true);
-    // 空の品目行は除外して保存
-    const cleanLines = editDraftLines.filter(li => li.name.trim());
+    // 日本語名が空の行は除外して保存
+    const cleanLines = editDraftLines
+      .filter(li => li.name_ja.trim() || li.name_zh.trim())
+      .map(li => ({ ...li, name_zh: li.name_zh.trim() || li.name_ja.trim() }));
     await patchReceipt(id, {
-      item: editDraftItem,
+      item_ja: editDraftItemJa,
+      item_zh: editDraftItemZh.trim() || editDraftItemJa,
       line_items: cleanLines,
       debit_account: editDraftDebit,
       credit_account: editDraftCredit,
@@ -1049,7 +1074,7 @@ export default function Home() {
                           <div key={r.id} className="bg-white rounded-xl p-3 flex justify-between items-center shadow-sm">
                             <div className="flex-1 min-w-0">
                               <div className="font-medium text-sm text-gray-800 truncate">{r.merchant}</div>
-                              {r.item && <div className="text-xs text-indigo-500 truncate">🛍 {r.item}</div>}
+                              {itemText(r, lang) && <div className="text-xs text-indigo-500 truncate">🛍 {itemText(r, lang)}</div>}
                               <div className="text-xs text-gray-400">{r.date} · {r.debit_account ?? r.category_label}</div>
                             </div>
                             <div className="flex items-center gap-2 flex-shrink-0">
@@ -1270,13 +1295,13 @@ export default function Home() {
                         <span className="text-gray-500">{t.merchant}</span>
                         <span className="font-medium">{scanResult.merchant}</span>
                       </div>
-                      {scanResult.item && (
+                      {itemText(scanResult, lang) && (
                         <div className="flex justify-between text-sm">
                           <span className="text-gray-500">{t.item}</span>
-                          <span className="font-medium text-right">{scanResult.item}</span>
+                          <span className="font-medium text-right">{itemText(scanResult, lang)}</span>
                         </div>
                       )}
-                      <LineItemsView items={scanResult.line_items} labels={{ lineItems: t.lineItems, subtotal: t.subtotal }} />
+                      <LineItemsView items={scanResult.line_items} lang={lang} labels={{ lineItems: t.lineItems, subtotal: t.subtotal }} />
                     </div>
 
                     <div className="space-y-1 border-b border-gray-100 pb-3">
@@ -1437,8 +1462,8 @@ export default function Home() {
                   <div className="flex justify-between items-start mb-2">
                     <div>
                       <div className="font-medium text-gray-800 text-sm">{r.merchant}</div>
-                      {r.item && (
-                        <div className="text-xs text-indigo-500 mt-0.5">🛍 {r.item}</div>
+                      {itemText(r, lang) && (
+                        <div className="text-xs text-indigo-500 mt-0.5">🛍 {itemText(r, lang)}</div>
                       )}
                       <div className="text-xs text-gray-400 mt-0.5">{r.date}</div>
                     </div>
@@ -1477,7 +1502,7 @@ export default function Home() {
 
                   {/* 明細（品目ごとの個数・単価） */}
                   {!editing && r.line_items && r.line_items.length > 0 && (
-                    <LineItemsView items={r.line_items} labels={{ lineItems: t.lineItems, subtotal: t.subtotal }} />
+                    <LineItemsView items={r.line_items} lang={lang} labels={{ lineItems: t.lineItems, subtotal: t.subtotal }} />
                   )}
 
                   {/* ── アクション: 手動で勘定科目変更 / AIに相談 ── */}
@@ -1498,15 +1523,21 @@ export default function Home() {
                   {editing && (
                     <div className="mt-3 rounded-xl border border-indigo-100 bg-indigo-50/40 p-3 space-y-2">
                       <div>
-                        <label className="text-[11px] text-gray-500">{t.item}</label>
-                        <input value={editDraftItem} onChange={e => setEditDraftItem(e.target.value)}
+                        <label className="text-[11px] text-gray-500">{t.itemJa}</label>
+                        <input value={editDraftItemJa} onChange={e => setEditDraftItemJa(e.target.value)}
                           placeholder={t.itemPlaceholder}
+                          className="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm mt-0.5 focus:outline-none focus:border-indigo-400" />
+                      </div>
+                      <div>
+                        <label className="text-[11px] text-gray-500">{t.itemZh}</label>
+                        <input value={editDraftItemZh} onChange={e => setEditDraftItemZh(e.target.value)}
+                          placeholder="例：复印纸・文具"
                           className="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm mt-0.5 focus:outline-none focus:border-indigo-400" />
                       </div>
                       <LineItemsEditor
                         items={editDraftLines}
                         onChange={setEditDraftLines}
-                        labels={{ lineItems: t.lineItems, qty: t.qty, unitPrice: t.unitPrice, addLine: t.addLine, itemName: t.itemName }}
+                        labels={{ lineItems: t.lineItems, qty: t.qty, unitPrice: t.unitPrice, addLine: t.addLine, nameJa: t.nameJa, nameZh: t.nameZh }}
                       />
                       {([
                         { label: t.debit,  val: editDraftDebit,  set: setEditDraftDebit,  opts: masterDebits },

@@ -26,6 +26,8 @@ export async function PATCH(
   // Only allow a safe subset of fields to be patched
   const patch: Record<string, unknown> = {};
   if (body.item           !== undefined) patch.item           = body.item;
+  if (body.item_ja        !== undefined) { patch.item_ja = body.item_ja; patch.item = body.item_ja; }
+  if (body.item_zh        !== undefined) patch.item_zh        = body.item_zh;
   if (body.line_items     !== undefined) patch.line_items     = body.line_items;
   if (body.debit_account  !== undefined) patch.debit_account  = body.debit_account;
   if (body.credit_account !== undefined) patch.credit_account = body.credit_account;
