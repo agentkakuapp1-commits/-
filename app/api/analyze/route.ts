@@ -26,7 +26,7 @@ export async function POST(req: NextRequest): Promise<NextResponse<ReceiptData>>
 
   if (apiKey && imageBase64) {
     try {
-      const prompt = `You are a Japanese accounting assistant. Analyze this receipt image.
+      const prompt = `You are a Japanese accounting assistant. Analyze this receipt (it may be a photo or a PDF).
 Return ONLY a valid JSON object, no markdown.
 
 {

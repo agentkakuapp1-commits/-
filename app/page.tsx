@@ -542,10 +542,10 @@ export default function Home() {
           {/* ════ SCAN TAB ══════════════════════════════════════════════ */}
           {tab === 'scan' && (
             <>
-              <input ref={fileRef} type="file" accept="image/*"
+              <input ref={fileRef} type="file" accept="image/*,application/pdf"
                 {...({ capture: 'environment' } as object)}
                 className="hidden" onChange={handleImageSelect} />
-              <input ref={batchFileRef} type="file" accept="image/*" multiple
+              <input ref={batchFileRef} type="file" accept="image/*,application/pdf" multiple
                 className="hidden" onChange={handleBatchSelect} />
 
               {scanMode === 'single' && scan === 'idle' && (
@@ -633,8 +633,14 @@ export default function Home() {
                             item.saved ? 'border-emerald-200' : 'border-gray-100'
                           }`}>
                             <div className="flex gap-3 p-3">
-                              {/* eslint-disable-next-line @next/next/no-img-element */}
-                              <img src={item.previewUrl} alt="" className="w-16 h-16 rounded-xl object-cover flex-shrink-0" />
+                              {item.file?.type === 'application/pdf' ? (
+                                <div className="w-16 h-16 rounded-xl bg-gray-50 border border-gray-100 flex items-center justify-center flex-shrink-0">
+                                  <FileText size={22} className="text-indigo-500" />
+                                </div>
+                              ) : (
+                                /* eslint-disable-next-line @next/next/no-img-element */
+                                <img src={item.previewUrl} alt="" className="w-16 h-16 rounded-xl object-cover flex-shrink-0" />
+                              )}
                               <div className="flex-1 min-w-0">
                                 {item.status === 'pending' && (
                                   <div className="flex items-center gap-1 text-gray-400 text-sm">
@@ -738,8 +744,15 @@ export default function Home() {
               {/* Single scan states */}
               {scanMode === 'single' && scan === 'preview' && imgPreview && (
                 <div className="space-y-4">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={imgPreview} alt="preview" className="w-full rounded-2xl object-cover max-h-72 shadow" />
+                  {imgFile?.type === 'application/pdf' ? (
+                    <div className="w-full rounded-2xl bg-gray-50 border border-gray-100 shadow flex flex-col items-center justify-center py-12 gap-2">
+                      <FileText size={40} className="text-indigo-500" />
+                      <span className="text-sm text-gray-500 truncate max-w-[80%]">{imgFile.name}</span>
+                    </div>
+                  ) : (
+                    /* eslint-disable-next-line @next/next/no-img-element */
+                    <img src={imgPreview} alt="preview" className="w-full rounded-2xl object-cover max-h-72 shadow" />
+                  )}
                   <button onClick={handleAnalyze}
                     className="w-full bg-indigo-600 text-white py-3.5 rounded-2xl font-semibold shadow active:scale-95 transition-transform">
                     {t.preview}

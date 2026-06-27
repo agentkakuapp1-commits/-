@@ -14,7 +14,7 @@ async function analyzeOne(
   index: number,
   today: string
 ): Promise<ReceiptData> {
-  const prompt = `You are a Japanese accounting assistant. Analyze this receipt image.
+  const prompt = `You are a Japanese accounting assistant. Analyze this receipt (it may be a photo or a PDF).
 Return ONLY a valid JSON object, no markdown.
 
 {
