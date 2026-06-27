@@ -1,9 +1,24 @@
 import { NextRequest, NextResponse } from 'next/server';
 
+interface LineItem { name: string; qty: number; unit_price: number; }
+
 interface ReceiptData {
-  date: string; merchant: string; amount: number; category: string; confidence: number;
+  date: string; merchant: string; item: string; line_items: LineItem[]; amount: number; category: string; confidence: number;
   tax_rate: number; tax_amount: number; amount_before_tax: number;
   invoice_number: string | null; debit_account: string; credit_account: string;
+}
+
+// Gemini が返す line_items を安全な配列へ整形
+function sanitizeLineItems(raw: unknown): LineItem[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.slice(0, 50).map((x) => {
+    const o = (x ?? {}) as Record<string, unknown>;
+    return {
+      name: String(o.name ?? '').trim().slice(0, 60) || '品目不明',
+      qty: Math.max(1, Math.round(Number(o.qty) || 1)),
+      unit_price: Math.max(0, Math.round(Number(o.unit_price) || 0)),
+    };
+  }).filter((li) => li.name);
 }
 
 export async function POST(req: NextRequest): Promise<NextResponse<ReceiptData>> {
@@ -32,6 +47,8 @@ Return ONLY a valid JSON object, no markdown.
 {
   "date": "YYYY-MM-DD",
   "merchant": "exact store name as printed",
+  "item": "コピー用紙・ボールペン",
+  "line_items": [{"name": "コピー用紙", "qty": 3, "unit_price": 480}, {"name": "ボールペン", "qty": 2, "unit_price": 150}],
   "amount": 3850,
   "tax_rate": 10,
   "tax_amount": 350,
@@ -44,6 +61,8 @@ Return ONLY a valid JSON object, no markdown.
 
 Rules:
 - date: use ${today} if not clearly visible
+- item: a short, human-readable summary (品目) of WHAT was actually purchased, in Japanese. Summarize the line items, max ~20 chars (e.g. "文房具一式", "会議用コーヒー", "ノートPC"). If unclear, infer the most likely category of goods from the store. Never leave empty.
+- line_items: an array of each purchased line on the receipt. For every line: name (品目名, Japanese, concise), qty (個数, integer, default 1 if not shown), unit_price (単価 in integer JPY as printed). Exclude subtotal/tax/total/discount summary rows. If individual lines are not readable, return [].
 - amount: total including tax, integer JPY
 - tax_rate: 8 for food/beverages (軽減税率), 10 for all others
 - tax_amount: consumption tax portion (integer)
@@ -77,7 +96,8 @@ Rules:
       const text: string = json.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
       console.log('[analyze] Gemini:', text.slice(0, 200));
 
-      const match = text.match(/\{[\s\S]*?\}/);
+      // 先頭の { から末尾の } まで（line_items の入れ子オブジェクトを含めて）取得
+      const match = text.match(/\{[\s\S]*\}/);
       if (match) {
         const p = JSON.parse(match[0]);
         const amount = Math.round(Number(p.amount) || 0);
@@ -86,6 +106,8 @@ Rules:
         return NextResponse.json({
           date: String(p.date ?? today),
           merchant: String(p.merchant ?? '不明'),
+          item: String(p.item ?? '').trim() || '品目不明',
+          line_items: sanitizeLineItems(p.line_items),
           amount,
           category: 'unknown',
           confidence: Number(p.confidence) || 0.7,
@@ -105,7 +127,12 @@ Rules:
   const mock = 3850;
   const mockTax = Math.round(mock * 10 / 110);
   return NextResponse.json({
-    date: today, merchant: 'コクヨ 新宿店', amount: mock,
+    date: today, merchant: 'コクヨ 新宿店', item: 'コピー用紙・文具',
+    line_items: [
+      { name: 'コピー用紙 A4', qty: 3, unit_price: 480 },
+      { name: 'ボールペン 黒', qty: 2, unit_price: 150 },
+    ],
+    amount: mock,
     category: 'office_supplies', confidence: 0.45,
     tax_rate: 10, tax_amount: mockTax, amount_before_tax: mock - mockTax,
     invoice_number: null, debit_account: '消耗品費', credit_account: '現金',
