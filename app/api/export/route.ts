@@ -45,6 +45,69 @@ export async function GET(req: NextRequest) {
 
   const rows = data ?? [];
 
+  // ── 購入明細表（いつ・何を・いくら）HTML ─────────────────────────────────────
+  if (format === 'items') {
+    const lang = searchParams.get('lang') === 'zh' ? 'zh' : 'ja';
+    const L = lang === 'zh'
+      ? { title:'购买明细表', period:'对象期间', created:'制表日', count:'笔数', date:'日期', col2:'商户 / 品目', qty:'数量', unit:'单价', amount:'金额', total:'合计' }
+      : { title:'購入明細表', period:'対象期間', created:'作成日', count:'件数', date:'日付', col2:'取引先 / 品目', qty:'個数', unit:'単価', amount:'金額', total:'合計' };
+    const esc = (s: unknown) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const total = rows.reduce((s, r) => s + r.amount, 0);
+
+    const blocks = rows.map(r => {
+      const lis: { name: string; qty: number; unit_price: number }[] = Array.isArray(r.line_items) ? r.line_items : [];
+      const liRows = lis.map(li => {
+        const q = Number(li.qty) || 0, u = Number(li.unit_price) || 0;
+        return `<tr class="li">
+          <td></td>
+          <td class="liname">${esc(li.name)}</td>
+          <td class="ctr">×${q}</td>
+          <td class="num">¥${u.toLocaleString('ja-JP')}</td>
+          <td class="num">¥${(q * u).toLocaleString('ja-JP')}</td>
+        </tr>`;
+      }).join('');
+      return `<tr class="head">
+        <td>${esc(r.date)}</td>
+        <td colspan="3"><strong>${esc(r.merchant)}</strong>${r.item ? ` <span class="tag">${esc(r.item)}</span>` : ''}</td>
+        <td class="num bold">¥${r.amount.toLocaleString('ja-JP')}</td>
+      </tr>${liRows}`;
+    }).join('');
+
+    const html = `<!DOCTYPE html><html lang="${lang}"><head><meta charset="UTF-8">
+<title>${L.title} ${month}</title>
+<style>
+  ${CSS_BASE}
+  table{border:2px solid #333}
+  th{background:#1a1a2e;color:#fff;font-size:12px}
+  td{font-size:12px}
+  tr.head td{background:#eef0fb;border-top:2px solid #333}
+  tr.li td{border-color:#e0e0e0;color:#333}
+  .liname{padding-left:24px;color:#444}
+  .tag{display:inline-block;margin-left:6px;padding:1px 8px;background:#4f46e5;color:#fff;border-radius:10px;font-size:10px}
+  .grand{font-size:16px;font-weight:700;text-align:right;margin-top:12px;color:#4f46e5}
+</style></head><body>
+<h1>${L.title}</h1>
+<div class="meta">
+  <span>${L.period}：${month}</span>
+  <span>${L.created}：${new Date().toLocaleDateString(lang === 'zh' ? 'zh-CN' : 'ja-JP')}</span>
+  <span>${L.count}：${rows.length}</span>
+</div>
+<table>
+  <thead><tr>
+    <th style="width:90px">${L.date}</th>
+    <th>${L.col2}</th>
+    <th style="width:60px">${L.qty}</th>
+    <th style="width:90px">${L.unit}</th>
+    <th style="width:100px">${L.amount}</th>
+  </tr></thead>
+  <tbody>${blocks}</tbody>
+</table>
+<div class="grand">${L.total}：¥${total.toLocaleString('ja-JP')}</div>
+</body></html>`;
+
+    return new NextResponse(html, { headers: { 'Content-Type': 'text/html; charset=utf-8' } });
+  }
+
   // ── 経費管理表 HTML ──────────────────────────────────────────────────────────
   if (format === 'kanri') {
     const trs = rows.map((r, i) => {

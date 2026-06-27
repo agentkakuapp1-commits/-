@@ -134,6 +134,7 @@ const T = {
     batchSaved:'保存済み',
     selectCategory:'カテゴリを選択',
     kanriReport:'経費管理表を開く（印刷用）',
+    purchaseReport:'購入明細表を開く（いつ・何を・いくら）',
     bsReport:'貸借対照表を開く（印刷用）',
     accountMaster:'勘定科目マスタ',
     debitAccounts:'借方勘定科目（費用）',
@@ -196,6 +197,7 @@ const T = {
     batchSaved:'已保存',
     selectCategory:'选择类别',
     kanriReport:'费用管理表（打印用）',
+    purchaseReport:'购买明细表（何时・买什么・多少钱）',
     bsReport:'资产负债表（打印用）',
     accountMaster:'会计科目管理',
     debitAccounts:'借方科目（费用）',
@@ -1732,6 +1734,10 @@ export default function Home() {
                 <button onClick={() => window.open(`/api/export?format=kanri&month=${exportMonth}`, '_blank')}
                   className="w-full bg-violet-600 hover:bg-violet-700 text-white py-3.5 px-4 rounded-2xl flex items-center gap-3 font-medium shadow active:scale-95 transition-transform">
                   <List size={18} />{t.kanriReport}
+                </button>
+                <button onClick={() => window.open(`/api/export?format=items&month=${exportMonth}&lang=${lang}`, '_blank')}
+                  className="w-full bg-fuchsia-600 hover:bg-fuchsia-700 text-white py-3.5 px-4 rounded-2xl flex items-center gap-3 font-medium shadow active:scale-95 transition-transform">
+                  <FileText size={18} />{t.purchaseReport}
                 </button>
                 <button onClick={() => window.open(`/api/export?format=bs&month=${exportMonth}`, '_blank')}
                   className="w-full bg-slate-700 hover:bg-slate-800 text-white py-3.5 px-4 rounded-2xl flex items-center gap-3 font-medium shadow active:scale-95 transition-transform">
